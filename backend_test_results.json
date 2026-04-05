@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-04-05T23:12:28.882865",
+  "total_tests": 20,
+  "passed_tests": 17,
+  "success_rate": 85.0,
+  "results": [
+    {
+      "test": "Invalid Login Attempt",
+      "success": false,
+      "details": "Expected 401, got No response",
+      "response_data": null
+    },
+    {
+      "test": "Admin Login",
+      "success": true,
+      "details": "Logged in as Administrador PMTF",
+      "response_data": null
+    },
+    {
+      "test": "Standard User Login",
+      "success": true,
+      "details": "Logged in as Usu\u00e1rio Padr\u00e3o",
+      "response_data": null
+    },
+    {
+      "test": "Auth Me - Admin",
+      "success": true,
+      "details": "Role: ADMIN",
+      "response_data": null
+    },
+    {
+      "test": "Auth Me - User",
+      "success": true,
+      "details": "Role: PADR\u00c3O",
+      "response_data": null
+    },
+    {
+      "test": "Get All Vehicles - Admin",
+      "success": true,
+      "details": "Found 4 vehicles",
+      "response_data": null
+    },
+    {
+      "test": "Get All Vehicles - User",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Get Active Vehicles",
+      "success": true,
+      "details": "Found 2 vehicles",
+      "response_data": null
+    },
+    {
+      "test": "Get Maintenance Vehicles",
+      "success": true,
+      "details": "Found 1 vehicles",
+      "response_data": null
+    },
+    {
+      "test": "Get Inactive Vehicles",
+      "success": true,
+      "details": "Found 1 vehicles",
+      "response_data": null
+    },
+    {
+      "test": "Create Vehicle - Admin",
+      "success": true,
+      "details": "Created vehicle with ID: 69d2ec5b657a20d00cfb1f9b",
+      "response_data": null
+    },
+    {
+      "test": "Create Vehicle - User (Should Fail)",
+      "success": false,
+      "details": "Expected 403, got No response",
+      "response_data": null
+    },
+    {
+      "test": "Update Vehicle - Admin",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Get Vehicle History",
+      "success": true,
+      "details": "Found 2 history entries",
+      "response_data": null
+    },
+    {
+      "test": "Delete Vehicle - Admin",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Get Users - Admin",
+      "success": true,
+      "details": "Found 2 users",
+      "response_data": null
+    },
+    {
+      "test": "Get Users - User (Should Fail)",
+      "success": false,
+      "details": "Expected 403, got No response",
+      "response_data": null
+    },
+    {
+      "test": "Create User - Admin",
+      "success": true,
+      "details": "Created user with ID: 69d2ec5c657a20d00cfb1f9e",
+      "response_data": null
+    },
+    {
+      "test": "Delete User - Admin",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Logout - Admin",
+      "success": true,
+      "details": "",
+      "response_data": null
+    }
+  ]
+}
