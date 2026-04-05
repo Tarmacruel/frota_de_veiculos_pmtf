@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { ArrowLeft, Edit, Trash2, History, FileDown, Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -341,6 +341,7 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
         <DialogContent data-testid="edit-vehicle-dialog">
           <DialogHeader>
             <DialogTitle>Editar Veículo</DialogTitle>
+            <DialogDescription>Atualize as informações do veículo</DialogDescription>
           </DialogHeader>
           {editingVehicle && (
             <div className="space-y-4">
@@ -429,6 +430,7 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
             <DialogTitle>
               Histórico de Lotação - {selectedVehicle?.placa}
             </DialogTitle>
+            <DialogDescription>Visualize todas as movimentações do veículo</DialogDescription>
           </DialogHeader>
           <div className="overflow-x-auto">
             <Table>

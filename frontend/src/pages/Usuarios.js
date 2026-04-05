@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { ArrowLeft, UserPlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -181,6 +181,7 @@ export const Usuarios = () => {
         <DialogContent data-testid="create-user-dialog">
           <DialogHeader>
             <DialogTitle>Criar Novo Usuário</DialogTitle>
+            <DialogDescription>Adicione um novo usuário ao sistema</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreateUser} className="space-y-4">
             <div>
