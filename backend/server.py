@@ -97,6 +97,7 @@ class VehicleCreate(BaseModel):
     chassi: str
     status: str = "EM_ATIVIDADE"
     lotacao_atual: str
+    departamento: str
 
 class VehicleUpdate(BaseModel):
     placa: Optional[str] = None
@@ -106,6 +107,7 @@ class VehicleUpdate(BaseModel):
     chassi: Optional[str] = None
     status: Optional[str] = None
     lotacao_atual: Optional[str] = None
+    departamento: Optional[str] = None
 
 class VehicleResponse(BaseModel):
     id: str
@@ -116,11 +118,13 @@ class VehicleResponse(BaseModel):
     chassi: str
     status: str
     lotacao_atual: str
+    departamento: str
     created_at: str
     updated_at: str
 
 class LocationHistoryCreate(BaseModel):
     local: str
+    departamento: str
     data_inicio: str
     data_fim: Optional[str] = None
 
@@ -128,6 +132,7 @@ class LocationHistoryResponse(BaseModel):
     id: str
     vehicle_id: str
     local: str
+    departamento: str
     data_inicio: str
     data_fim: Optional[str] = None
 
@@ -247,6 +252,7 @@ async def create_vehicle(vehicle_data: VehicleCreate, current_user: dict = Depen
     history_doc = {
         "vehicle_id": str(result.inserted_id),
         "local": vehicle_data.lotacao_atual,
+        "departamento": vehicle_data.departamento,
         "data_inicio": datetime.now(timezone.utc).isoformat(),
         "data_fim": None
     }
@@ -257,29 +263,69 @@ async def create_vehicle(vehicle_data: VehicleCreate, current_user: dict = Depen
     return vehicle_doc
 
 @api_router.get("/vehicles")
-async def get_all_vehicles(current_user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({}).to_list(1000)
+async def get_all_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
     for vehicle in vehicles:
         vehicle["id"] = str(vehicle.pop("_id"))
     return vehicles
 
 @api_router.get("/vehicles/em-atividade")
-async def get_active_vehicles(current_user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({"status": "EM_ATIVIDADE"}).to_list(1000)
+async def get_active_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "EM_ATIVIDADE"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
     for vehicle in vehicles:
         vehicle["id"] = str(vehicle.pop("_id"))
     return vehicles
 
 @api_router.get("/vehicles/em-manutencao")
-async def get_maintenance_vehicles(current_user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({"status": "EM_MANUTENCAO"}).to_list(1000)
+async def get_maintenance_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "EM_MANUTENCAO"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
     for vehicle in vehicles:
         vehicle["id"] = str(vehicle.pop("_id"))
     return vehicles
 
 @api_router.get("/vehicles/inativos")
-async def get_inactive_vehicles(current_user: dict = Depends(get_current_user)):
-    vehicles = await db.vehicles.find({"status": "INATIVO"}).to_list(1000)
+async def get_inactive_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "INATIVO"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
     for vehicle in vehicles:
         vehicle["id"] = str(vehicle.pop("_id"))
     return vehicles
@@ -292,14 +338,23 @@ async def update_vehicle(vehicle_id: str, vehicle_data: VehicleUpdate, current_u
     
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    if "lotacao_atual" in update_data:
+    if "lotacao_atual" in update_data or "departamento" in update_data:
+        current_vehicle = await db.vehicles.find_one({"_id": ObjectId(vehicle_id)})
+        if not current_vehicle:
+            raise HTTPException(status_code=404, detail="Veículo não encontrado")
+        
+        new_lotacao = update_data.get("lotacao_atual", current_vehicle.get("lotacao_atual"))
+        new_departamento = update_data.get("departamento", current_vehicle.get("departamento"))
+        
         await db.location_history.update_many(
             {"vehicle_id": vehicle_id, "data_fim": None},
             {"$set": {"data_fim": datetime.now(timezone.utc).isoformat()}}
         )
+        
         history_doc = {
             "vehicle_id": vehicle_id,
-            "local": update_data["lotacao_atual"],
+            "local": new_lotacao,
+            "departamento": new_departamento,
             "data_inicio": datetime.now(timezone.utc).isoformat(),
             "data_fim": None
         }
@@ -398,6 +453,7 @@ async def startup_event():
             "chassi": "9BWZZZ377VT004251",
             "status": "EM_ATIVIDADE",
             "lotacao_atual": "Secretaria de Saúde",
+            "departamento": "Departamento de Vigilância Sanitária",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         },
@@ -409,6 +465,7 @@ async def startup_event():
             "chassi": "9BWZZZ377VT004252",
             "status": "EM_MANUTENCAO",
             "lotacao_atual": "Oficina Municipal",
+            "departamento": "Setor de Manutenção Preventiva",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         },
@@ -420,6 +477,7 @@ async def startup_event():
             "chassi": "9BWZZZ377VT004253",
             "status": "EM_ATIVIDADE",
             "lotacao_atual": "Secretaria de Obras",
+            "departamento": "Departamento de Infraestrutura",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         },
@@ -431,6 +489,7 @@ async def startup_event():
             "chassi": "9BWZZZ377VT004254",
             "status": "INATIVO",
             "lotacao_atual": "Depósito Municipal",
+            "departamento": "Setor de Patrimônio",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
@@ -443,10 +502,16 @@ async def startup_event():
             await db.location_history.insert_one({
                 "vehicle_id": str(result.inserted_id),
                 "local": vehicle["lotacao_atual"],
+                "departamento": vehicle["departamento"],
                 "data_inicio": datetime.now(timezone.utc).isoformat(),
                 "data_fim": None
             })
             logger.info(f"Veículo de teste criado: {vehicle['placa']}")
+        else:
+            await db.vehicles.update_one(
+                {"placa": vehicle["placa"]},
+                {"$set": {"departamento": vehicle["departamento"]}}
+            )
     
     os.makedirs('/app/memory', exist_ok=True)
     with open('/app/memory/test_credentials.md', 'w') as f:

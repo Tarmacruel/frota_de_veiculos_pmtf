@@ -20,7 +20,8 @@ export const CadastrarVeiculo = () => {
     ano_fabricacao: '',
     chassi: '',
     status: 'EM_ATIVIDADE',
-    lotacao_atual: ''
+    lotacao_atual: '',
+    departamento: ''
   });
 
   const handleChange = (e) => {
@@ -167,6 +168,20 @@ export const CadastrarVeiculo = () => {
               onChange={handleChange}
               required
               data-testid="lotacao-input"
+              className="mt-1"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="departamento">Sublotação / Departamento *</Label>
+            <Input
+              id="departamento"
+              name="departamento"
+              placeholder="Ex: Departamento de Vigilância Sanitária"
+              value={formData.departamento}
+              onChange={handleChange}
+              required
+              data-testid="departamento-input"
               className="mt-1"
             />
           </div>

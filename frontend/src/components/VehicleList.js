@@ -38,20 +38,27 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [selectedVehicleHistory, setSelectedVehicleHistory] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [searchPlaca, setSearchPlaca] = useState('');
+  const [searchMarca, setSearchMarca] = useState('');
   const printRef = useRef();
 
   const isAdmin = user?.role === 'ADMIN';
 
   useEffect(() => {
     fetchVehicles();
-  }, []);
+  }, [searchPlaca, searchMarca]);
 
   const fetchVehicles = async () => {
     setLoading(true);
     try {
-      const { data } = await axios.get(`${BACKEND_URL}/api/vehicles${endpoint}`, {
-        withCredentials: true
-      });
+      const params = new URLSearchParams();
+      if (searchPlaca) params.append('placa', searchPlaca);
+      if (searchMarca) params.append('marca', searchMarca);
+      
+      const { data } = await axios.get(
+        `${BACKEND_URL}/api/vehicles${endpoint}${params.toString() ? '?' + params.toString() : ''}`,
+        { withCredentials: true }
+      );
       setVehicles(data);
     } catch (error) {
       toast.error('Erro ao carregar veículos');
@@ -134,18 +141,19 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
         v.marca,
         v.modelo,
         v.ano_fabricacao,
-        v.chassi,
         statusLabels[v.status],
-        v.lotacao_atual
+        v.lotacao_atual,
+        v.departamento || '-'
       ]);
 
       doc.autoTable({
         startY: 40,
-        head: [['Placa', 'Marca', 'Modelo', 'Ano', 'Chassi', 'Status', 'Lotação']],
+        head: [['Placa', 'Marca', 'Modelo', 'Ano', 'Status', 'Lotação', 'Sublotação/Depto']],
         body: tableData,
         theme: 'grid',
         headStyles: { fillColor: [30, 58, 138] },
-        margin: { top: 40 }
+        margin: { top: 40 },
+        styles: { fontSize: 8 }
       });
 
       doc.save(`${title.toLowerCase().replace(/\s+/g, '-')}.pdf`);
@@ -168,18 +176,19 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
         v.marca,
         v.modelo,
         v.ano_fabricacao,
-        v.chassi,
         statusLabels[v.status],
-        v.lotacao_atual
+        v.lotacao_atual,
+        v.departamento || '-'
       ]);
 
       doc.autoTable({
         startY: 40,
-        head: [['Placa', 'Marca', 'Modelo', 'Ano', 'Chassi', 'Status', 'Lotação']],
+        head: [['Placa', 'Marca', 'Modelo', 'Ano', 'Status', 'Lotação', 'Sublotação/Depto']],
         body: tableData,
         theme: 'grid',
         headStyles: { fillColor: [30, 58, 138] },
-        margin: { top: 40 }
+        margin: { top: 40 },
+        styles: { fontSize: 8 }
       });
 
       doc.save(`${title.toLowerCase().replace(/\s+/g, '-')}.pdf`);
@@ -240,6 +249,46 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
         </div>
       </div>
 
+      <div className="mb-4 bg-card border border-border rounded-md p-4 print-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <Label htmlFor="search-placa">Filtrar por Placa</Label>
+            <Input
+              id="search-placa"
+              placeholder="Ex: ABC-1234"
+              value={searchPlaca}
+              onChange={(e) => setSearchPlaca(e.target.value)}
+              data-testid="filter-placa-input"
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <Label htmlFor="search-marca">Filtrar por Marca</Label>
+            <Input
+              id="search-marca"
+              placeholder="Ex: Toyota"
+              value={searchMarca}
+              onChange={(e) => setSearchMarca(e.target.value)}
+              data-testid="filter-marca-input"
+              className="mt-1"
+            />
+          </div>
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchPlaca('');
+                setSearchMarca('');
+              }}
+              data-testid="clear-filters-button"
+              className="w-full"
+            >
+              Limpar Filtros
+            </Button>
+          </div>
+        </div>
+      </div>
+
       <div ref={printRef} className="bg-card border border-border rounded-md overflow-hidden">
         <div className="p-6 print-header" style={{ display: 'none' }}>
           <div className="flex items-center gap-4 mb-4">
@@ -266,9 +315,9 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
                 <TableHead>Marca</TableHead>
                 <TableHead>Modelo</TableHead>
                 <TableHead>Ano</TableHead>
-                <TableHead>Chassi</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Lotação</TableHead>
+                <TableHead>Sublotação/Depto</TableHead>
                 <TableHead className="print-hidden">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -286,7 +335,6 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
                     <TableCell>{vehicle.marca}</TableCell>
                     <TableCell>{vehicle.modelo}</TableCell>
                     <TableCell>{vehicle.ano_fabricacao}</TableCell>
-                    <TableCell className="font-mono text-sm">{vehicle.chassi}</TableCell>
                     <TableCell>
                       <span
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium border ${
@@ -297,6 +345,7 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
                       </span>
                     </TableCell>
                     <TableCell>{vehicle.lotacao_atual}</TableCell>
+                    <TableCell className="text-sm text-slate-600">{vehicle.departamento}</TableCell>
                     <TableCell className="print-hidden">
                       <div className="flex gap-2">
                         <Button
@@ -411,6 +460,18 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
                 />
               </div>
 
+              <div>
+                <Label htmlFor="edit-departamento">Sublotação / Departamento</Label>
+                <Input
+                  id="edit-departamento"
+                  value={editingVehicle.departamento || ''}
+                  onChange={(e) =>
+                    setEditingVehicle({ ...editingVehicle, departamento: e.target.value })
+                  }
+                  data-testid="edit-departamento-input"
+                />
+              </div>
+
               <div className="flex gap-2 pt-4">
                 <Button onClick={handleUpdateVehicle} data-testid="save-vehicle-button">
                   Salvar Alterações
@@ -436,29 +497,45 @@ export const VehicleList = ({ status, title, endpoint, dataTestId }) => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Local</TableHead>
+                  <TableHead>Lotação</TableHead>
+                  <TableHead>Sublotação / Departamento</TableHead>
                   <TableHead>Data Início</TableHead>
                   <TableHead>Data Fim</TableHead>
+                  <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {selectedVehicleHistory.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-center py-4">
+                    <TableCell colSpan={5} className="text-center py-4">
                       Nenhum histórico encontrado
                     </TableCell>
                   </TableRow>
                 ) : (
                   selectedVehicleHistory.map((entry) => (
                     <TableRow key={entry.id}>
-                      <TableCell>{entry.local}</TableCell>
+                      <TableCell className="font-medium">{entry.local}</TableCell>
+                      <TableCell className="text-sm text-slate-600">
+                        {entry.departamento || '-'}
+                      </TableCell>
                       <TableCell>
                         {new Date(entry.data_inicio).toLocaleDateString('pt-BR')}
                       </TableCell>
                       <TableCell>
                         {entry.data_fim
                           ? new Date(entry.data_fim).toLocaleDateString('pt-BR')
-                          : 'Atual'}
+                          : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {!entry.data_fim ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                            Atual
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                            Finalizado
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))
