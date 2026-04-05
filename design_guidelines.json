@@ -1,0 +1,92 @@
+{
+  "theme": "light",
+  "archetype": "4",
+  "archetype_name": "Swiss & High-Contrast (Adapted for Government/Corporate)",
+  "design_philosophy": "Modern, minimalist, and corporate/governmental. Prioritizes data clarity, authority, and functional beauty. Uses a crisp structural layout with high contrast for readability and a distinct professional tone fitting for a municipal government fleet management system.",
+  "colors": {
+    "background": "#f8fafc",
+    "foreground": "#0f172a",
+    "card": "#ffffff",
+    "card_foreground": "#0f172a",
+    "primary": "#1e3a8a",
+    "primary_foreground": "#ffffff",
+    "secondary": "#f1f5f9",
+    "secondary_foreground": "#1e293b",
+    "muted": "#f1f5f9",
+    "muted_foreground": "#64748b",
+    "accent": "#e0e7ff",
+    "accent_foreground": "#1e3a8a",
+    "destructive": "#ef4444",
+    "destructive_foreground": "#ffffff",
+    "border": "#e2e8f0",
+    "input": "#e2e8f0",
+    "ring": "#1e3a8a",
+    "status": {
+      "active": "#10b981",
+      "maintenance": "#f59e0b",
+      "inactive": "#64748b"
+    }
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Outfit, sans-serif",
+      "body": "'IBM Plex Sans', sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-xl sm:text-2xl font-medium tracking-tight text-slate-800",
+      "h4": "text-lg sm:text-xl font-medium tracking-tight text-slate-800",
+      "body": "text-base leading-relaxed text-slate-600",
+      "small": "text-sm text-slate-500",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-slate-500"
+    }
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-6 md:p-8 lg:p-12",
+    "gap_standard": "gap-6",
+    "gap_large": "gap-8 lg:gap-12",
+    "border_radius": "rounded-md",
+    "layout_strategy": "Sidebar navigation (fixed left) with a sticky top header. Main content uses a subtle gray background with flat, rectangular, white containers for data tables. Borders are crisp 1px solid (border-border)."
+  },
+  "components": {
+    "buttons": "Flat, rectangular or slightly rounded (rounded-md). Primary buttons use Government Blue (#1e3a8a). Hover states must darken the hue and maintain high contrast text.",
+    "cards": "Cardless or flat cards with 1px border. Avoid heavy shadows. Use soft ambient shadow (shadow-sm) on hover.",
+    "tables": "Dense, highly readable data tables. Left-aligned text for data, center for status badges. Alternating row colors (subtle slate-50) for better scannability.",
+    "forms": "Inputs with clear 1px borders, subtle focus rings in primary blue. Labels must be clearly visible above inputs.",
+    "sidebar": "Dark slate (#0f172a) or deep blue (#1e3a8a) background with white text, OR crisp white with slate text and subtle right border. Ensure high contrast for active menu items."
+  },
+  "motion": {
+    "hover": "Subtle background color shifts and slight lift (-translate-y-[1px]) for interactive cards.",
+    "transitions": "transition-all duration-200 ease-in-out",
+    "page_load": "Fade in with a slight upward motion for lists and tables."
+  },
+  "icons_and_assets": {
+    "icon_library": "lucide-react",
+    "icon_style": "Outline, stroke-width 2, clean and legible.",
+    "images": [
+      {
+        "category": "logo",
+        "description": "Brasão PMTF (Prefeitura Municipal de Teixeira de Freitas) - Use in header/sidebar and login screen",
+        "url": "https://www.teixeiradefreitas.ba.gov.br/wp-content/uploads/2022/05/brasao-pmtf-610x768.png"
+      },
+      {
+        "category": "background",
+        "description": "Modern corporate/government abstract background for the login screen to add depth and professionalism",
+        "url": "https://images.unsplash.com/photo-1567193729952-23830c0743ea?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjb3Jwb3JhdGUlMjBvZmZpY2UlMjBidWlsZGluZyUyMGFic3RyYWN0fGVufDB8fHx8MTc3NTQzMDE1Nnww&ixlib=rb-4.1.0&q=85"
+      }
+    ]
+  },
+  "specific_instructions_for_main_agent": [
+    "Use the provided Brasão PMTF logo url in the login screen, the main sidebar/header, and in the PDF export.",
+    "Implement two user roles: 'ADMIN' and 'PADRÃO'.",
+    "ADMIN has full CRUD access to users and vehicles, and can change vehicle statuses.",
+    "PADRÃO has read-only access to vehicle lists (Atividade, Manutenção, Inativos), and can export PDF/print.",
+    "Required pages/menus: Login, Cadastrar Veículo, Veículos em Atividade, Veículos em Manutenção, Veículos Inativos, Usuários, and Histórico de Lotação.",
+    "For PDF export (jspdf + jspdf-autotable) and Printing (react-to-print): Ensure the generated report includes the report name, current date, tabular data, and the Brasão PMTF logo as a miniature in the header.",
+    "Keep the UI in Portuguese (pt-BR).",
+    "Use standard Shadcn components (Table, Dialog, Form, Input, Button, Select) but customize them to match the strict corporate/governmental layout (sharp edges, flat surfaces, minimal shadows).",
+    "Ensure all interactive elements have data-testid attributes (e.g., data-testid='login-button').",
+    "Install 'lucide-react' for icons."
+  ]
+}
