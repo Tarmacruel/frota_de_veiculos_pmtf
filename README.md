@@ -5261,6 +5261,1294 @@ if blacklisted:
     raise HTTPException(status_code=401, detail="Token revogado")
 ```
 
+Continuando a documentação técnica completa:
+
 ---
 
-Devido ao limite de resposta, vou continuar com as seções 10-21 em outra mensagem. Deseja que eu continue?
+## 10. REGRAS DE NEGÓCIO
+
+### 10.1 Regras de Usuários
+
+**RN-USR-001: Cadastro de Usuário**
+- Email deve ser único no sistema (índice MongoDB garante)
+- Email convertido para lowercase antes de salvar
+- Senha hasheada com bcrypt (salt gerado automaticamente)
+- Role padrão é "PADRÃO" se não especificado
+- created_at definido automaticamente como UTC ISO 8601
+
+**RN-USR-002: Validação de Email**
+- Deve ser um email válido (Pydantic EmailStr valida)
+- Case-insensitive (admin@test.com = ADMIN@test.com)
+- Não pode ser vazio ou nulo
+
+**RN-USR-003: Senha**
+- Mínimo: não há validação explícita (falha do sistema)
+- Hash: bcrypt com salt automático
+- Armazenamento: apenas hash, nunca plaintext
+- Verificação: timing-safe com bcrypt.checkpw
+
+**RN-USR-004: Roles**
+- Apenas dois roles permitidos: "ADMIN" e "PADRÃO"
+- Case-sensitive (deve ser exatamente como definido)
+- Role não pode ser alterado após criação (falta endpoint de update)
+- Admin pode criar usuários de qualquer role
+
+**RN-USR-005: Exclusão de Usuário**
+- Apenas ADMIN pode deletar usuários
+- Não há verificação se usuário está deletando a si próprio (vulnerabilidade)
+- Não há verificação de dados relacionados
+- Exclusão é permanente (sem soft delete)
+
+**RN-USR-006: Admin Seed**
+- Admin padrão criado automaticamente no startup
+- Se admin existe mas senha mudou no .env, atualiza senha
+- Email do admin vem de ADMIN_EMAIL (.env)
+- Senha do admin vem de ADMIN_PASSWORD (.env)
+
+---
+
+### 10.2 Regras de Veículos
+
+**RN-VEH-001: Cadastro de Veículo**
+- Todos os campos obrigatórios: placa, marca, modelo, ano_fabricacao, chassi, lotacao_atual, departamento
+- Status padrão: "EM_ATIVIDADE" se não especificado
+- created_at e updated_at definidos automaticamente (UTC ISO 8601)
+- Histórico inicial criado automaticamente com data_fim = null
+
+**RN-VEH-002: Status Válidos**
+- "EM_ATIVIDADE": Veículo operacional
+- "EM_MANUTENCAO": Veículo em manutenção
+- "INATIVO": Veículo fora de operação
+- Qualquer outro valor não é validado (falha - deveria retornar erro)
+
+**RN-VEH-003: Placa**
+- Armazenada como fornecida (sem normalização)
+- Sem validação de formato (deveria validar AAA-1234 ou similar)
+- Sem índice único (permite duplicatas - problema potencial)
+- Case-sensitive em armazenamento (ABC-1234 ≠ abc-1234)
+- Busca case-insensitive via regex
+
+**RN-VEH-004: Ano de Fabricação**
+- Deve ser número inteiro
+- Sem validação de range (aceita 0, 9999, números negativos - problema)
+- Deveria validar: 1900 <= ano <= ano_atual + 1
+
+**RN-VEH-005: Edição de Veículo**
+- Apenas ADMIN pode editar
+- Atualização parcial permitida (campos opcionais)
+- updated_at atualizado automaticamente
+- Se lotacao_atual OU departamento mudarem:
+  - Finaliza lotação anterior (define data_fim)
+  - Cria nova entrada de histórico
+  - Mesmo se apenas um campo mudar, cria nova entrada com ambos
+
+**RN-VEH-006: Lotação e Departamento**
+- Sempre armazenados juntos
+- Mudança em um implica atualização do histórico
+- Lotação atual no veículo deve sempre bater com última entrada de histórico (data_fim = null)
+- Se alterar apenas departamento sem lotacao_atual, usa lotacao_atual existente do veículo
+
+**RN-VEH-007: Exclusão de Veículo**
+- Apenas ADMIN pode deletar
+- Cascata manual: deleta todo histórico de lotação
+- Exclusão permanente (sem soft delete)
+- Sem confirmação adicional (apenas no frontend com window.confirm)
+
+**RN-VEH-008: Listagem e Filtros**
+- Todos usuários autenticados podem listar
+- Filtros por placa e marca: case-insensitive, substring match
+- Limite de 1000 veículos por query (proteção)
+- Ordenação: não especificada (ordem de inserção do MongoDB)
+
+---
+
+### 10.3 Regras de Histórico de Lotação
+
+**RN-HIST-001: Criação de Histórico**
+- Criado automaticamente ao cadastrar veículo
+- Criado automaticamente ao editar lotacao_atual ou departamento
+- data_inicio sempre definido como agora (UTC)
+- data_fim sempre null para lotação atual
+
+**RN-HIST-002: Lotação Atual**
+- Cada veículo pode ter APENAS UMA entrada com data_fim = null
+- Esta entrada representa a lotação atual
+- Ao mudar lotação, antiga é finalizada (data_fim definido)
+
+**RN-HIST-003: Finalização de Lotação**
+- Ao editar lotacao_atual ou departamento:
+- Busca todas entradas com data_fim = null para o veículo
+- Define data_fim = agora (UTC)
+- Permite múltiplas finalizações simultâneas (problema: deveria ser única)
+
+**RN-HIST-004: Ordem Cronológica**
+- Histórico retornado ordenado por data_inicio DESC (mais recente primeiro)
+- Permite visualizar timeline completa
+
+**RN-HIST-005: Exclusão de Histórico**
+- Apenas deletado quando veículo é deletado (cascata manual)
+- Não há endpoint para deletar entrada individual
+- Não há endpoint para editar histórico
+
+**RN-HIST-006: Validações Ausentes**
+- Não valida data_fim > data_inicio
+- Não valida sobreposição de períodos
+- Não garante que apenas 1 lotação está ativa (deveria ter índice parcial único)
+
+---
+
+### 10.4 Regras de Autenticação
+
+**RN-AUTH-001: Login**
+- Email case-insensitive
+- Verificação timing-safe da senha (bcrypt)
+- Mensagem de erro genérica (não revela se email existe)
+- Gera access_token (15min) e refresh_token (7 dias)
+- Tokens armazenados em cookies httpOnly
+
+**RN-AUTH-002: Registro**
+- Email deve ser único
+- Senha hasheada antes de salvar
+- Usuário automaticamente logado após registro
+- Tokens criados e retornados
+
+**RN-AUTH-003: Logout**
+- Deleta cookies access_token e refresh_token
+- Token JWT continua válido até expirar (stateless)
+- Não há invalidação imediata do token
+
+**RN-AUTH-004: Verificação de Sessão**
+- GET /api/auth/me verifica se token ainda válido
+- Token expirado → 401
+- Token válido mas usuário deletado → 401
+- Retorna dados do usuário (sem senha)
+
+**RN-AUTH-005: Expiração de Token**
+- Access token: 15 minutos
+- Refresh token: 7 dias (não usado atualmente)
+- Após expiração, usuário deve fazer login novamente
+
+**RN-AUTH-006: Cookies**
+- httpOnly: true (proteção XSS)
+- secure: false em dev, true em prod
+- samesite: lax (proteção CSRF parcial)
+- path: / (disponível em todas rotas)
+
+---
+
+### 10.5 Regras de Autorização
+
+**RN-AUTHZ-001: Acesso Público**
+- Apenas /api/auth/register e /api/auth/login são públicos
+- Todas outras rotas exigem autenticação
+
+**RN-AUTHZ-002: Role PADRÃO**
+- Pode visualizar todos veículos (todas listagens)
+- Pode visualizar histórico de lotação
+- Pode fazer logout
+- NÃO pode criar, editar ou deletar veículos
+- NÃO pode gerenciar usuários
+- NÃO pode acessar /api/users
+
+**RN-AUTHZ-003: Role ADMIN**
+- Todas permissões de PADRÃO +
+- Pode criar, editar e deletar veículos
+- Pode criar e deletar usuários
+- Pode listar todos usuários
+
+**RN-AUTHZ-004: Proteção de Rotas**
+- Dependency Injection: Depends(get_current_user)
+- Admin-only: Depends(require_admin)
+- Usuário não autenticado → 401 Unauthorized
+- Usuário autenticado mas sem permissão → 403 Forbidden
+
+---
+
+### 10.6 Regras de Validação
+
+**RN-VAL-001: Validação Pydantic**
+- Automática em todos endpoints
+- Campos obrigatórios: erro 422 se ausentes
+- Tipos incorretos: erro 422
+- Email inválido: erro 422
+
+**RN-VAL-002: Validação de Duplicatas**
+- Email de usuário: verificado manualmente antes de insert
+- Placa de veículo: NÃO verificado (permite duplicatas - problema)
+
+**RN-VAL-003: Validação de Existência**
+- Ao editar/deletar: verifica se registro existe
+- Se não existe: erro 404
+
+**RN-VAL-004: Validação de ObjectId**
+- MongoDB valida automaticamente
+- ObjectId inválido causa exception (não tratada - erro 500)
+- Deveria retornar 400 Bad Request
+
+---
+
+### 10.7 Regras de Timestamps
+
+**RN-TIME-001: Formato**
+- Sempre UTC
+- Sempre ISO 8601: "2026-04-05T23:00:00.000000+00:00"
+- Gerado com: datetime.now(timezone.utc).isoformat()
+
+**RN-TIME-002: created_at**
+- Definido apenas na criação
+- Nunca atualizado
+- Presente em: users, vehicles
+- Não presente em: location_history (tem data_inicio)
+
+**RN-TIME-003: updated_at**
+- Definido na criação (igual a created_at)
+- Atualizado em TODA edição
+- Presente em: vehicles
+- Não presente em: users (problema - deveria ter)
+
+**RN-TIME-004: data_inicio e data_fim**
+- data_inicio: sempre definido na criação da entrada
+- data_fim: null para lotação atual, UTC ISO quando finalizada
+- Interpretação: data_fim = null → ativo
+
+---
+
+### 10.8 Regras de Integridade
+
+**RN-INT-001: Integridade Referencial**
+- MongoDB não suporta foreign keys
+- Implementada manualmente:
+  - Ao deletar veículo: deleta histórico
+  - Ao editar lotação: finaliza anteriores
+- Risco: dados órfãos se lógica falhar
+
+**RN-INT-002: Unicidade**
+- Email de usuário: garantido por índice unique
+- Placa de veículo: NÃO garantido (problema)
+- ID (_id): garantido pelo MongoDB (ObjectId)
+
+**RN-INT-003: Consistência de Lotação**
+- Lotação atual no veículo DEVE bater com histórico (data_fim = null)
+- Verificação: não implementada (confiança na lógica)
+- Risco: inconsistência se edição falhar parcialmente
+
+---
+
+### 10.9 Regras de Segurança
+
+**RN-SEC-001: Hash de Senha**
+- Algoritmo: bcrypt
+- Salt: gerado automaticamente (único por senha)
+- Custo: padrão (12 rounds - inferido)
+- Nunca retornar senha em responses
+
+**RN-SEC-002: JWT**
+- Algoritmo: HS256 (HMAC SHA-256)
+- Chave: JWT_SECRET do .env (deve ser forte)
+- Payload: não criptografado (apenas assinado)
+- Não incluir dados sensíveis no payload
+
+**RN-SEC-003: CORS**
+- allow_credentials: true (necessário para cookies)
+- allow_origins: * em dev, específico em prod
+- allow_methods e allow_headers: * (permissivo)
+
+**RN-SEC-004: Cookies**
+- httpOnly: proteção XSS
+- secure: apenas em HTTPS (prod)
+- samesite: lax (proteção CSRF parcial)
+
+**RN-SEC-005: Rate Limiting**
+- NÃO implementado (vulnerabilidade)
+- Deveria limitar tentativas de login
+- Deveria limitar requisições por IP
+
+---
+
+### 10.10 Regras Ausentes (Melhorias Necessárias)
+
+**RN-MISS-001: Soft Delete**
+- Não implementado
+- Exclusões são permanentes
+- Deveria ter campo "deleted_at" e filtrar em queries
+
+**RN-MISS-002: Auditoria**
+- Não rastreia quem criou/editou/deletou
+- Deveria ter campos: created_by, updated_by, deleted_by
+
+**RN-MISS-003: Paginação**
+- Limite fixo de 1000 registros
+- Sem suporte a offset/limit
+- Sem metadados (total, página atual, etc.)
+
+**RN-MISS-004: Ordenação**
+- Não permite customização
+- Usa ordem natural do MongoDB
+
+**RN-MISS-005: Validação de Formato**
+- Placa: sem validação de formato
+- Chassi: sem validação
+- Ano: sem range validation
+
+**RN-MISS-006: Campos de Texto**
+- Sem sanitização de HTML
+- Sem limite de tamanho (MongoDB limita 16MB por documento)
+
+---
+
+## 11. INTEGRAÇÕES EXTERNAS
+
+### 11.1 Integrações Usadas
+
+**NENHUMA integração externa está implementada.**
+
+O sistema é completamente standalone:
+- Sem serviços de email
+- Sem serviços de SMS
+- Sem storage externo (S3, etc.)
+- Sem analytics
+- Sem mapas
+- Sem consulta de CEP
+- Sem APIs governamentais
+- Sem webhooks
+
+---
+
+### 11.2 Integrações Recomendadas para Produção
+
+**11.2.1 Email (Notificações)**
+
+**Propósito:**
+- Recuperação de senha
+- Confirmação de cadastro
+- Notificações de mudanças
+
+**Provedores Sugeridos:**
+- **SendGrid:** API REST, template engine
+- **Resend:** Moderno, bom DX
+- **AWS SES:** Econômico para alto volume
+
+**Implementação Exemplo (SendGrid):**
+```python
+import sendgrid
+from sendgrid.helpers.mail import Mail
+
+sg = sendgrid.SendGridAPIClient(api_key=os.environ.get('SENDGRID_API_KEY'))
+
+async def send_password_reset_email(email: str, token: str):
+    message = Mail(
+        from_email='noreply@pmtf.gov.br',
+        to_emails=email,
+        subject='Recuperação de Senha - Frota PMTF',
+        html_content=f'<p>Clique no link para resetar: <a href="https://frota.pmtf.gov.br/reset?token={token}">Resetar Senha</a></p>'
+    )
+    response = sg.send(message)
+    return response.status_code
+```
+
+**Substituição:**
+- Biblioteca: `sendgrid` ou `resend`
+- Endpoint novo: POST /api/auth/forgot-password
+- Armazenar tokens de reset em collection separada
+
+---
+
+**11.2.2 Storage de Arquivos (Fotos de Veículos)**
+
+**Propósito:**
+- Upload de fotos de veículos
+- Documentos (manual, seguro, etc.)
+- Armazenamento escalável
+
+**Provedores Sugeridos:**
+- **AWS S3:** Padrão da indústria
+- **Cloudflare R2:** Sem custo de egress
+- **Supabase Storage:** Open source, fácil
+
+**Implementação Exemplo (AWS S3):**
+```python
+import boto3
+from fastapi import UploadFile
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.environ.get('AWS_REGION')
+)
+
+@api_router.post("/vehicles/{vehicle_id}/photo")
+async def upload_vehicle_photo(
+    vehicle_id: str,
+    file: UploadFile,
+    current_user: dict = Depends(require_admin)
+):
+    # 1. Validar tipo de arquivo
+    if not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Apenas imagens são permitidas")
+    
+    # 2. Gerar nome único
+    file_key = f"vehicles/{vehicle_id}/{file.filename}"
+    
+    # 3. Upload para S3
+    s3_client.upload_fileobj(
+        file.file,
+        os.environ.get('S3_BUCKET'),
+        file_key,
+        ExtraArgs={'ContentType': file.content_type}
+    )
+    
+    # 4. Gerar URL pública
+    photo_url = f"https://{os.environ.get('S3_BUCKET')}.s3.amazonaws.com/{file_key}"
+    
+    # 5. Salvar URL no veículo
+    await db.vehicles.update_one(
+        {"_id": ObjectId(vehicle_id)},
+        {"$set": {"photo_url": photo_url}}
+    )
+    
+    return {"photo_url": photo_url}
+```
+
+**Substituição:**
+- Biblioteca: `boto3` (S3) ou `supabase` (Supabase)
+- Adicionar campo `photo_url` em vehicles
+- Frontend: input type="file" + FormData
+
+---
+
+**11.2.3 PDF Avançado (Backend)**
+
+**Situação Atual:**
+- PDF gerado no frontend (jsPDF)
+- Limitações: apenas dados tabulares
+
+**Propósito:**
+- PDFs complexos (relatórios com gráficos)
+- Templates profissionais
+- Assinatura digital
+
+**Provedores Sugeridos:**
+- **ReportLab:** Python library
+- **WeasyPrint:** HTML to PDF
+- **Puppeteer/Playwright:** Headless browser
+
+**Implementação Exemplo (WeasyPrint):**
+```python
+from weasyprint import HTML
+from fastapi.responses import StreamingResponse
+import io
+
+@api_router.get("/vehicles/em-atividade/pdf")
+async def export_active_vehicles_pdf(current_user: dict = Depends(get_current_user)):
+    # 1. Buscar veículos
+    vehicles = await db.vehicles.find({"status": "EM_ATIVIDADE"}).to_list(1000)
+    
+    # 2. Gerar HTML
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid black; padding: 8px; }}
+        </style>
+    </head>
+    <body>
+        <h1>Veículos em Atividade - PMTF</h1>
+        <table>
+            <tr><th>Placa</th><th>Marca</th><th>Modelo</th></tr>
+            {''.join([f'<tr><td>{v["placa"]}</td><td>{v["marca"]}</td><td>{v["modelo"]}</td></tr>' for v in vehicles])}
+        </table>
+    </body>
+    </html>
+    """
+    
+    # 3. Converter para PDF
+    pdf_bytes = HTML(string=html_content).write_pdf()
+    
+    # 4. Retornar como stream
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type='application/pdf',
+        headers={'Content-Disposition': 'attachment; filename=veiculos-atividade.pdf'}
+    )
+```
+
+**Substituição:**
+- Biblioteca: `weasyprint` ou `reportlab`
+- Melhor controle de layout
+- Suporte a gráficos
+
+---
+
+**11.2.4 Notificações em Tempo Real**
+
+**Propósito:**
+- Notificar mudanças de status
+- Alertas de manutenção vencida
+- Comunicação entre usuários
+
+**Provedores Sugeridos:**
+- **Pusher:** Managed WebSockets
+- **Ably:** Real-time messaging
+- **Socket.io:** Self-hosted
+
+**Implementação Exemplo (WebSockets nativo):**
+```python
+from fastapi import WebSocket
+from typing import List
+
+# Armazenar conexões ativas
+active_connections: List[WebSocket] = []
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+    except:
+        active_connections.remove(websocket)
+
+async def broadcast_vehicle_update(vehicle_id: str, action: str):
+    message = {"type": "vehicle_update", "vehicle_id": vehicle_id, "action": action}
+    for connection in active_connections:
+        await connection.send_json(message)
+
+# Chamar em update_vehicle
+@api_router.put("/vehicles/{vehicle_id}")
+async def update_vehicle(...):
+    # ... lógica de update
+    await broadcast_vehicle_update(vehicle_id, "updated")
+    return updated_vehicle
+```
+
+**Frontend:**
+```javascript
+const ws = new WebSocket('wss://frota.pmtf.gov.br/ws');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'vehicle_update') {
+    // Atualizar UI
+    fetchVehicles();
+  }
+};
+```
+
+---
+
+**11.2.5 Logs e Monitoramento**
+
+**Propósito:**
+- Rastreamento de erros
+- Performance monitoring
+- Analytics
+
+**Provedores Sugeridos:**
+- **Sentry:** Error tracking
+- **LogRocket:** Session replay
+- **DataDog:** APM completo
+
+**Implementação Exemplo (Sentry):**
+```python
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+sentry_sdk.init(
+    dsn=os.environ.get('SENTRY_DSN'),
+    integrations=[FastApiIntegration()],
+    traces_sample_rate=1.0,
+)
+
+# Erros são automaticamente capturados
+# Ou capturar manualmente:
+try:
+    risky_operation()
+except Exception as e:
+    sentry_sdk.capture_exception(e)
+```
+
+---
+
+## 12. FLUXOS COMPLETOS DO SISTEMA
+
+### 12.1 Fluxo de Login
+
+**Eventos e Componentes:**
+
+```
+1. USUÁRIO ACESSA /login
+   └─> Componente: Login.js
+   └─> Estado inicial: email='', password='', error='', loading=false
+
+2. USUÁRIO PREENCHE FORMULÁRIO
+   └─> onChange: setEmail(value), setPassword(value)
+
+3. USUÁRIO CLICA "ENTRAR"
+   └─> Evento: onSubmit
+   └─> Previne default (preventDefault)
+   └─> setError('') - limpa erros anteriores
+   └─> setLoading(true) - botão vira "Entrando..."
+
+4. FRONTEND CHAMA API
+   └─> AuthContext.login(email, password)
+   └─> axios.post(BACKEND_URL + '/api/auth/login', {email, password}, {withCredentials: true})
+   
+5. BACKEND RECEBE REQUEST
+   └─> Rota: POST /api/auth/login
+   └─> Valida body com Pydantic (UserLogin)
+   └─> Se inválido → 422 Unprocessable Entity
+   
+6. BACKEND BUSCA USUÁRIO
+   └─> email_lower = credentials.email.lower()
+   └─> user = await db.users.find_one({"email": email_lower})
+   └─> Se não encontrado → HTTPException 401 "Email ou senha incorretos"
+   
+7. BACKEND VERIFICA SENHA
+   └─> verify_password(plain, hash)
+   └─> bcrypt.checkpw(senha.encode(), hash.encode())
+   └─> Se falso → HTTPException 401 "Email ou senha incorretos"
+   
+8. BACKEND CRIA TOKENS
+   └─> user_id = str(user["_id"])
+   └─> access_token = create_access_token(user_id, email)
+       └─> Payload: {sub, email, exp: 15min, type: "access"}
+       └─> jwt.encode(payload, JWT_SECRET, HS256)
+   └─> refresh_token = create_refresh_token(user_id)
+       └─> Payload: {sub, exp: 7days, type: "refresh"}
+       
+9. BACKEND DEFINE COOKIES
+   └─> response.set_cookie("access_token", value, httponly, samesite, maxage=900)
+   └─> response.set_cookie("refresh_token", value, httponly, samesite, maxage=604800)
+   
+10. BACKEND RETORNA RESPONSE
+    └─> 200 OK
+    └─> Body: {id, email, name, role, created_at}
+    └─> Headers: Set-Cookie (2x)
+    
+11. FRONTEND RECEBE RESPONSE
+    └─> data = response.data
+    └─> setUser(data) - AuthContext atualiza estado
+    └─> setLoading(false)
+    └─> navigate('/dashboard') - React Router redireciona
+    
+12. NAVEGAÇÃO PARA DASHBOARD
+    └─> BrowserRouter muda URL
+    └─> Route "/dashboard" ativa
+    └─> ProtectedRoute wrapper:
+        └─> useAuth() → user agora é objeto (não false)
+        └─> Renderiza DashboardLayout
+    └─> Dashboard.js renderiza cards
+    
+13. COOKIES PERSISTEM
+    └─> Armazenados no navegador
+    └─> Enviados automaticamente em requisições subsequentes
+```
+
+**Tratamento de Erro:**
+```
+SE ERRO NA ETAPA 4-10:
+└─> catch (err)
+└─> error = formatApiErrorDetail(err.response?.data?.detail)
+└─> setError(error)
+└─> setLoading(false)
+└─> Erro exibido em vermelho acima do formulário
+└─> Usuário permanece em /login
+```
+
+**Dados Trafegados:**
+
+**Request:**
+```http
+POST /api/auth/login HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Content-Type: application/json
+Cookie: (nenhum - primeiro login)
+
+{
+  "email": "admin@pmtf.gov.br",
+  "password": "admin123"
+}
+```
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Set-Cookie: access_token=eyJ...; HttpOnly; Path=/; SameSite=lax; Max-Age=900
+Set-Cookie: refresh_token=eyJ...; HttpOnly; Path=/; SameSite=lax; Max-Age=604800
+
+{
+  "id": "507f1f77bcf86cd799439011",
+  "email": "admin@pmtf.gov.br",
+  "name": "Administrador PMTF",
+  "role": "ADMIN",
+  "created_at": "2026-04-05T20:00:00.000000+00:00"
+}
+```
+
+---
+
+### 12.2 Fluxo de Cadastro de Veículo
+
+**Passo a Passo Completo:**
+
+```
+1. ADMIN NAVEGA PARA /dashboard/cadastrar-veiculo
+   └─> ProtectedRoute verifica:
+       └─> user existe? Se não → redirect /login
+       └─> user.role === "ADMIN"? Se não → redirect /dashboard
+   └─> CadastrarVeiculo.js renderiza
+
+2. ESTADO INICIAL DO FORMULÁRIO
+   └─> formData = {
+       placa: '', marca: '', modelo: '', ano_fabricacao: '',
+       chassi: '', status: 'EM_ATIVIDADE', lotacao_atual: '', departamento: ''
+   }
+   └─> loading = false
+
+3. USUÁRIO PREENCHE CAMPOS
+   └─> onChange em cada input:
+       └─> handleChange(e):
+           └─> setFormData({...formData, [e.target.name]: e.target.value})
+   └─> Select de status:
+       └─> handleStatusChange(value):
+           └─> setFormData({...formData, status: value})
+
+4. USUÁRIO CLICA "CADASTRAR VEÍCULO"
+   └─> onSubmit evento
+   └─> e.preventDefault()
+   └─> setLoading(true)
+
+5. VALIDAÇÃO HTML5
+   └─> Navegador valida campos obrigatórios (required)
+   └─> Se vazio → mostra mensagem nativa do browser
+   └─> ano_fabricacao: type="number" → valida que é número
+
+6. FRONTEND ENVIA REQUEST
+   └─> axios.post(
+       BACKEND_URL + '/api/vehicles',
+       {...formData, ano_fabricacao: parseInt(formData.ano_fabricacao)},
+       {withCredentials: true}
+   )
+   └─> Cookie access_token enviado automaticamente
+
+7. BACKEND RECEBE REQUEST
+   └─> Rota: POST /api/vehicles
+   └─> Dependency: current_user = Depends(require_admin)
+       └─> Extrai token do cookie
+       └─> Decodifica JWT
+       └─> Busca usuário no banco
+       └─> Verifica role === "ADMIN"
+       └─> Se não ADMIN → 403 Forbidden
+   
+8. VALIDAÇÃO PYDANTIC
+   └─> VehicleCreate valida body
+   └─> Campos obrigatórios presentes?
+   └─> Tipos corretos (int, str)?
+   └─> Se falha → 422 Unprocessable Entity
+
+9. BACKEND CRIA DOCUMENTO DO VEÍCULO
+   └─> vehicle_doc = vehicle_data.model_dump()
+   └─> vehicle_doc["created_at"] = datetime.now(timezone.utc).isoformat()
+   └─> vehicle_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+10. BACKEND INSERE NO MONGODB
+    └─> result = await db.vehicles.insert_one(vehicle_doc)
+    └─> vehicle_id = str(result.inserted_id)
+
+11. BACKEND CRIA HISTÓRICO INICIAL
+    └─> history_doc = {
+        "vehicle_id": vehicle_id,
+        "local": vehicle_data.lotacao_atual,
+        "departamento": vehicle_data.departamento,
+        "data_inicio": datetime.now(timezone.utc).isoformat(),
+        "data_fim": None
+    }
+    └─> await db.location_history.insert_one(history_doc)
+
+12. BACKEND PREPARA RESPOSTA
+    └─> vehicle_doc["id"] = vehicle_id
+    └─> vehicle_doc.pop("_id", None)
+    └─> return vehicle_doc
+
+13. BACKEND RETORNA 200 OK
+    └─> Body: veículo completo com id, timestamps
+
+14. FRONTEND RECEBE RESPOSTA
+    └─> toast.success('Veículo cadastrado com sucesso!')
+    └─> navigate('/dashboard/veiculos-atividade')
+
+15. NAVEGAÇÃO PARA LISTAGEM
+    └─> VeiculosAtividade.js monta
+    └─> useEffect chama fetchVehicles()
+    └─> GET /api/vehicles/em-atividade
+    └─> Novo veículo aparece na lista
+```
+
+**Tratamento de Erro:**
+```
+SE ERRO:
+└─> catch (error)
+└─> toast.error(error.response?.data?.detail || 'Erro ao cadastrar veículo')
+└─> setLoading(false)
+└─> Usuário permanece no formulário
+└─> Dados preenchidos mantidos (não limpa formData)
+```
+
+**Request/Response:**
+
+**Request:**
+```http
+POST /api/vehicles HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Content-Type: application/json
+Cookie: access_token=eyJ...
+
+{
+  "placa": "MNO-7890",
+  "marca": "Ford",
+  "modelo": "Ranger",
+  "ano_fabricacao": 2022,
+  "chassi": "9BWZZZ377VT004255",
+  "status": "EM_ATIVIDADE",
+  "lotacao_atual": "Secretaria de Educação",
+  "departamento": "Departamento de Transporte Escolar"
+}
+```
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "id": "507f1f77bcf86cd799439014",
+  "placa": "MNO-7890",
+  "marca": "Ford",
+  "modelo": "Ranger",
+  "ano_fabricacao": 2022,
+  "chassi": "9BWZZZ377VT004255",
+  "status": "EM_ATIVIDADE",
+  "lotacao_atual": "Secretaria de Educação",
+  "departamento": "Departamento de Transporte Escolar",
+  "created_at": "2026-04-05T23:35:00.000000+00:00",
+  "updated_at": "2026-04-05T23:35:00.000000+00:00"
+}
+```
+
+---
+
+### 12.3 Fluxo de Listagem com Filtros
+
+```
+1. USUÁRIO NAVEGA PARA /dashboard/veiculos-atividade
+   └─> VeiculosAtividade.js renderiza
+   └─> Passa props para VehicleList:
+       status="EM_ATIVIDADE"
+       title="Veículos em Atividade"
+       endpoint="/em-atividade"
+
+2. VehicleList MONTA
+   └─> Estado inicial:
+       vehicles=[], loading=true, searchPlaca='', searchMarca=''
+   └─> useEffect(() => fetchVehicles(), [searchPlaca, searchMarca])
+       └─> Executa fetchVehicles() na montagem
+
+3. BUSCA INICIAL (SEM FILTROS)
+   └─> fetchVehicles()
+   └─> setLoading(true)
+   └─> params = new URLSearchParams()
+   └─> searchPlaca e searchMarca vazios → sem params
+   └─> axios.get(BACKEND_URL + '/api/vehicles/em-atividade', {withCredentials: true})
+
+4. BACKEND PROCESSA
+   └─> Rota: GET /api/vehicles/em-atividade
+   └─> Dependency: get_current_user (qualquer usuário autenticado)
+   └─> query = {"status": "EM_ATIVIDADE"}
+   └─> placa e marca params vazios → não adiciona ao query
+   └─> vehicles = await db.vehicles.find(query).to_list(1000)
+   └─> Transforma _id em id
+   └─> return vehicles
+
+5. FRONTEND RECEBE DADOS
+   └─> setVehicles(data)
+   └─> setLoading(false)
+   └─> Renderiza tabela com todos veículos
+
+6. USUÁRIO DIGITA NO FILTRO DE PLACA
+   └─> Input: value={searchPlaca}, onChange={(e) => setSearchPlaca(e.target.value)}
+   └─> Digita "ABC"
+   └─> setSearchPlaca("ABC")
+
+7. RE-RENDER E RE-FETCH
+   └─> searchPlaca mudou → useEffect detecta
+   └─> fetchVehicles() executa novamente
+   └─> params.append('placa', 'ABC')
+   └─> URL: /api/vehicles/em-atividade?placa=ABC
+
+8. BACKEND FILTRA
+   └─> placa = "ABC"
+   └─> query["placa"] = {"$regex": "ABC", "$options": "i"}
+   └─> query final: {"status": "EM_ATIVIDADE", "placa": {"$regex": "ABC", "$options": "i"}}
+   └─> MongoDB busca: case-insensitive, substring match
+
+9. FRONTEND ATUALIZA LISTA
+   └─> setVehicles(filtered_data)
+   └─> Tabela re-renderiza com apenas veículos filtrados
+
+10. USUÁRIO CLICA "LIMPAR FILTROS"
+    └─> onClick={() => { setSearchPlaca(''); setSearchMarca(''); }}
+    └─> Ambos estados resetados
+    └─> useEffect re-executa
+    └─> Busca sem filtros novamente
+```
+
+**Debounce Implícito:**
+- Não há debounce implementado
+- Cada keystroke causa re-fetch
+- **Melhoria:** Adicionar debounce de 300ms
+
+**Implementação Debounce Recomendada:**
+```javascript
+import { useEffect, useState } from 'react';
+
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
+// Uso em VehicleList
+const debouncedPlaca = useDebounce(searchPlaca, 300);
+const debouncedMarca = useDebounce(searchMarca, 300);
+
+useEffect(() => {
+  fetchVehicles();
+}, [debouncedPlaca, debouncedMarca]);
+```
+
+---
+
+### 12.4 Fluxo de Edição de Veículo
+
+```
+1. ADMIN CLICA ÍCONE DE EDITAR
+   └─> onClick={() => handleEdit(vehicle)}
+   └─> handleEdit:
+       └─> setEditingVehicle({...vehicle}) - cópia do veículo
+       └─> setEditDialogOpen(true)
+
+2. MODAL DE EDIÇÃO ABRE
+   └─> Dialog com DialogContent
+   └─> Formulário pré-preenchido com editingVehicle
+   └─> Campos editáveis: placa, marca, modelo, status, lotacao_atual, departamento
+
+3. USUÁRIO ALTERA CAMPOS
+   └─> onChange={(e) => setEditingVehicle({...editingVehicle, [campo]: e.target.value})}
+   └─> Ex: Muda status para "EM_MANUTENCAO"
+   └─> Ex: Muda lotacao_atual para "Oficina Municipal"
+
+4. USUÁRIO CLICA "SALVAR ALTERAÇÕES"
+   └─> onClick={handleUpdateVehicle}
+   └─> axios.put(
+       BACKEND_URL + '/api/vehicles/' + editingVehicle.id,
+       editingVehicle,
+       {withCredentials: true}
+   )
+
+5. BACKEND RECEBE
+   └─> Rota: PUT /api/vehicles/{vehicle_id}
+   └─> Dependency: require_admin
+   └─> Body: editingVehicle completo (todos campos)
+
+6. BACKEND FILTRA CAMPOS ALTERADOS
+   └─> update_data = {k: v for k, v in vehicle_data.model_dump().items() if v is not None}
+   └─> Nota: Pydantic VehicleUpdate tem todos campos Optional
+   └─> Frontend envia todos campos (não apenas alterados)
+   └─> Todos serão incluídos em update_data
+
+7. BACKEND ADICIONA updated_at
+   └─> update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+8. BACKEND VERIFICA MUDANÇA DE LOTAÇÃO
+   └─> if "lotacao_atual" in update_data or "departamento" in update_data:
+   └─> current_vehicle = await db.vehicles.find_one({"_id": ObjectId(vehicle_id)})
+   └─> new_lotacao = update_data.get("lotacao_atual", current_vehicle.get("lotacao_atual"))
+   └─> new_departamento = update_data.get("departamento", current_vehicle.get("departamento"))
+
+9. BACKEND FINALIZA LOTAÇÃO ANTERIOR
+   └─> await db.location_history.update_many(
+       {"vehicle_id": vehicle_id, "data_fim": None},
+       {"$set": {"data_fim": datetime.now(timezone.utc).isoformat()}}
+   )
+
+10. BACKEND CRIA NOVA ENTRADA DE HISTÓRICO
+    └─> history_doc = {
+        "vehicle_id": vehicle_id,
+        "local": new_lotacao,
+        "departamento": new_departamento,
+        "data_inicio": datetime.now(timezone.utc).isoformat(),
+        "data_fim": None
+    }
+    └─> await db.location_history.insert_one(history_doc)
+
+11. BACKEND ATUALIZA VEÍCULO
+    └─> result = await db.vehicles.update_one(
+        {"_id": ObjectId(vehicle_id)},
+        {"$set": update_data}
+    )
+    └─> Se matched_count == 0 → 404
+
+12. BACKEND BUSCA VEÍCULO ATUALIZADO
+    └─> updated_vehicle = await db.vehicles.find_one({"_id": ObjectId(vehicle_id)})
+    └─> Transforma _id em id
+    └─> return updated_vehicle
+
+13. FRONTEND RECEBE RESPOSTA
+    └─> toast.success('Veículo atualizado com sucesso!')
+    └─> setEditDialogOpen(false) - fecha modal
+    └─> fetchVehicles() - re-busca lista completa
+
+14. LISTA ATUALIZA
+    └─> Veículo editado aparece com novos dados
+    └─> Se status mudou, pode sair da lista atual (ex: era ativo, virou manutenção)
+```
+
+**Observação Importante:**
+- Frontend envia TODOS campos, não apenas alterados
+- Backend poderia otimizar comparando valores antigos vs novos
+- Histórico é criado mesmo se lotação não mudou (bug potencial)
+
+---
+
+### 12.5 Fluxo de Visualização de Histórico
+
+```
+1. USUÁRIO CLICA ÍCONE DE HISTÓRICO
+   └─> onClick={() => handleViewHistory(vehicle)}
+
+2. FRONTEND BUSCA HISTÓRICO
+   └─> setSelectedVehicle(vehicle)
+   └─> axios.get(
+       BACKEND_URL + '/api/vehicles/' + vehicle.id + '/historico',
+       {withCredentials: true}
+   )
+
+3. BACKEND PROCESSA
+   └─> Rota: GET /api/vehicles/{vehicle_id}/historico
+   └─> Dependency: get_current_user (qualquer autenticado)
+   └─> history = await db.location_history.find({"vehicle_id": vehicle_id})
+       .sort("data_inicio", -1)  # Descendente (mais recente primeiro)
+       .to_list(1000)
+   └─> Transforma _id em id
+   └─> return history
+
+4. FRONTEND RECEBE HISTÓRICO
+   └─> setSelectedVehicleHistory(data)
+   └─> setHistoryDialogOpen(true)
+
+5. MODAL DE HISTÓRICO RENDERIZA
+   └─> DialogTitle: "Histórico de Lotação - {vehicle.placa}"
+   └─> Tabela com colunas:
+       - Lotação
+       - Sublotação/Departamento
+       - Data Início (formatada pt-BR)
+       - Data Fim (formatada pt-BR ou "-")
+       - Status (badge Atual/Finalizado)
+
+6. RENDERIZAÇÃO DE CADA ENTRADA
+   └─> history.map((entry) => (
+       <TableRow>
+         <TableCell>{entry.local}</TableCell>
+         <TableCell>{entry.departamento || '-'}</TableCell>
+         <TableCell>{new Date(entry.data_inicio).toLocaleDateString('pt-BR')}</TableCell>
+         <TableCell>
+           {entry.data_fim 
+             ? new Date(entry.data_fim).toLocaleDateString('pt-BR')
+             : '-'}
+         </TableCell>
+         <TableCell>
+           {!entry.data_fim ? (
+             <Badge green>Atual</Badge>
+           ) : (
+             <Badge gray>Finalizado</Badge>
+           )}
+         </TableCell>
+       </TableRow>
+   ))
+
+7. USUÁRIO VISUALIZA TIMELINE
+   └─> Primeira linha: Lotação atual (data_fim = null, badge verde "Atual")
+   └─> Demais linhas: Lotações passadas (data_fim preenchido, badge cinza "Finalizado")
+   └─> Ordem cronológica inversa (mais recente no topo)
+```
+
+**Exemplo de Dados:**
+```json
+[
+  {
+    "id": "...",
+    "vehicle_id": "507f...",
+    "local": "Secretaria de Saúde",
+    "departamento": "Depto Vigilância",
+    "data_inicio": "2026-04-05T23:00:00.000000+00:00",
+    "data_fim": null  // ATUAL
+  },
+  {
+    "id": "...",
+    "vehicle_id": "507f...",
+    "local": "Secretaria de Obras",
+    "departamento": "Depto Infraestrutura",
+    "data_inicio": "2026-01-15T10:00:00.000000+00:00",
+    "data_fim": "2026-04-05T23:00:00.000000+00:00"  // PASSADO
+  }
+]
+```
+
+---
+
+### 12.6 Fluxo de Exportação PDF
+
+```
+1. USUÁRIO CLICA "EXPORTAR PDF"
+   └─> onClick={handleExportPDF}
+
+2. FUNÇÃO INICIA
+   └─> const doc = new jsPDF();
+
+3. TENTA CARREGAR LOGO
+   └─> const img = new Image();
+   └─> img.src = 'https://...brasao-pmtf-610x768.png'
+   └─> img.crossOrigin = 'anonymous'
+
+4. LOGO CARREGA (img.onload)
+   └─> doc.addImage(img, 'PNG', 14, 10, 15, 18)  // x, y, width, height
+   └─> doc.setFontSize(16)
+   └─> doc.setFont('helvetica', 'bold')
+   └─> doc.text('Frota de Veículos PMTF', 35, 18)
+   └─> doc.setFontSize(12)
+   └─> doc.text(title, 35, 25)  // "Veículos em Atividade"
+   └─> doc.setFontSize(10)
+   └─> doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 14, 35)
+
+5. MONTA DADOS DA TABELA
+   └─> const tableData = vehicles.map((v) => [
+       v.placa,
+       v.marca,
+       v.modelo,
+       v.ano_fabricacao,
+       statusLabels[v.status],
+       v.lotacao_atual,
+       v.departamento || '-'
+   ])
+
+6. ADICIONA TABELA AO PDF
+   └─> doc.autoTable({
+       startY: 40,
+       head: [['Placa', 'Marca', 'Modelo', 'Ano', 'Status', 'Lotação', 'Sublotação/Depto']],
+       body: tableData,
+       theme: 'grid',
+       headStyles: { fillColor: [30, 58, 138] },  // Azul governo
+       margin: { top: 40 },
+       styles: { fontSize: 8 }
+   })
+
+7. SALVA PDF
+   └─> doc.save(`${title.toLowerCase().replace(/\s+/g, '-')}.pdf`)
+   └─> Exemplo: "veiculos-em-atividade.pdf"
+
+8. NAVEGADOR BAIXA ARQUIVO
+   └─> Download inicia automaticamente
+   └─> Arquivo salvo na pasta Downloads
+```
+
+**Fallback (se logo não carregar):**
+```javascript
+img.onerror = () => {
+  // Gera PDF sem logo
+  // Mesmo código mas sem doc.addImage()
+}
+```
+
+**Estrutura do PDF Gerado:**
+```
+┌────────────────────────────────────────┐
+│ [Logo]  Frota de Veículos PMTF         │
+│         Veículos em Atividade          │
+│         Data: 05/04/2026               │
+├────────────────────────────────────────┤
+│ Tabela:                                │
+│ Placa | Marca | Modelo | ... | Depto  │
+│ ABC   | Ford  | Ranger | ... | Transp │
+│ DEF   | Fiat  | Toro   | ... | Manutenção│
+│ ...                                    │
+└────────────────────────────────────────┘
+```
+
+---
+
+### 12.7 Fluxo de Logout
+
+```
+1. USUÁRIO CLICA "SAIR"
+   └─> Botão na sidebar (DashboardLayout)
+   └─> onClick={handleLogout}
+
+2. FUNÇÃO LOGOUT
+   └─> const handleLogout = async () => {
+       await logout();  // AuthContext
+       navigate('/login');
+   }
+
+3. AUTHCONTEXT.LOGOUT
+   └─> axios.post(
+       BACKEND_URL + '/api/auth/logout',
+       {},
+       {withCredentials: true}
+   )
+
+4. BACKEND PROCESSA
+   └─> Rota: POST /api/auth/logout
+   └─> Dependency: get_current_user (verifica autenticação)
+   └─> response.delete_cookie(key="access_token", path="/")
+   └─> response.delete_cookie(key="refresh_token", path="/")
+   └─> return {"message": "Logout realizado com sucesso"}
+
+5. FRONTEND RECEBE RESPOSTA
+   └─> Cookies deletados do navegador
+   └─> setUser(false) - AuthContext atualiza estado
+
+6. NAVEGAÇÃO PARA LOGIN
+   └─> navigate('/login')
+   └─> Rota muda para /login
+   └─> Login.js renderiza
+
+7. TENTATIVA DE ACESSAR ROTA PROTEGIDA
+   └─> Se usuário tentar acessar /dashboard diretamente
+   └─> ProtectedRoute verifica: user === false
+   └─> Redirect para /login
+```
+
+**Importante:**
+- Token JWT ainda válido até expirar (15min)
+- Mas frontend não tem mais acesso (cookie deletado)
+- Se usuário copiou token antes, ainda pode usar até expirar
+- **Melhoria:** Implementar blacklist de tokens
+
+---
+
+Vou continuar com as seções restantes (13-21) na próxima mensagem. Deseja que eu continue?
