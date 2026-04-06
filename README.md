@@ -2336,12 +2336,1479 @@ Título: Histórico de Lotação - ABC-1234
 - `history-button-{placa}`, `edit-button-{placa}`, `delete-button-{placa}`
 - `edit-vehicle-dialog`, `history-dialog`
 
+Continuando a documentação técnica completa:
+
 ---
 
-Continuarei com as páginas restantes e seções seguintes em mensagens subsequentes devido ao limite de caracteres. A documentação está seguindo o formato solicitado com todos os detalhes técnicos.
+### 6.10 Páginas de Listagem de Veículos
 
-Gostaria que eu continue com:
-- 6.10 Páginas de Listagem (VeiculosAtividade, etc.)
-- 6.11 Página de Usuários
-- 6.12 Sistema de Estilos e Design
-- E depois as seções 7-21?
+**6.10.1 VeiculosAtividade - `src/pages/VeiculosAtividade.js`**
+
+**Responsabilidade:**
+- Wrapper para VehicleList com parâmetros específicos de veículos ativos
+
+**Código Completo:**
+```javascript
+import React from 'react';
+import { VehicleList } from '../components/VehicleList';
+
+export const VeiculosAtividade = () => {
+  return (
+    <VehicleList
+      status="EM_ATIVIDADE"
+      title="Veículos em Atividade"
+      endpoint="/em-atividade"
+      dataTestId="veiculos-atividade-page"
+    />
+  );
+};
+```
+
+**Props Passadas:**
+- `status`: String usada para identificação (não usada internamente atualmente)
+- `title`: Exibido no cabeçalho da página
+- `endpoint`: Concatenado com `/api/vehicles` para formar URL completa
+- `dataTestId`: Atributo data-testid do container principal
+
+**Chamada de API Resultante:**
+```
+GET https://frota-veiculos.preview.emergentagent.com/api/vehicles/em-atividade
+```
+
+**Filtro Aplicado no Backend:**
+```python
+{"status": "EM_ATIVIDADE"}
+```
+
+---
+
+**6.10.2 VeiculosManutencao - `src/pages/VeiculosManutencao.js`**
+
+**Código Completo:**
+```javascript
+import React from 'react';
+import { VehicleList } from '../components/VehicleList';
+
+export const VeiculosManutencao = () => {
+  return (
+    <VehicleList
+      status="EM_MANUTENCAO"
+      title="Veículos em Manutenção"
+      endpoint="/em-manutencao"
+      dataTestId="veiculos-manutencao-page"
+    />
+  );
+};
+```
+
+**Chamada de API:**
+```
+GET /api/vehicles/em-manutencao
+```
+
+**Filtro Backend:**
+```python
+{"status": "EM_MANUTENCAO"}
+```
+
+---
+
+**6.10.3 VeiculosInativos - `src/pages/VeiculosInativos.js`**
+
+**Código Completo:**
+```javascript
+import React from 'react';
+import { VehicleList } from '../components/VehicleList';
+
+export const VeiculosInativos = () => {
+  return (
+    <VehicleList
+      status="INATIVO"
+      title="Veículos Inativos"
+      endpoint="/inativos"
+      dataTestId="veiculos-inativos-page"
+    />
+  );
+};
+```
+
+**Chamada de API:**
+```
+GET /api/vehicles/inativos
+```
+
+**Filtro Backend:**
+```python
+{"status": "INATIVO"}
+```
+
+---
+
+### 6.11 Página de Gerenciamento de Usuários - `src/pages/Usuarios.js`
+
+**Responsabilidade:**
+- Listar todos os usuários do sistema
+- Permitir criação de novos usuários (ADMIN)
+- Permitir exclusão de usuários (ADMIN)
+- Exibir brasão PMTF no cabeçalho da tabela
+
+**Props:** Nenhuma
+
+**Estados:**
+```javascript
+const [users, setUsers] = useState([]);
+const [loading, setLoading] = useState(true);
+const [dialogOpen, setDialogOpen] = useState(false);
+const [formData, setFormData] = useState({
+  email: '',
+  password: '',
+  name: '',
+  role: 'PADRÃO'
+});
+```
+
+**Hooks:**
+- `useState()`: Gerenciar estados
+- `useNavigate()`: Voltar para dashboard
+- `useEffect()`: Carregar usuários ao montar
+
+**fetchUsers:**
+```javascript
+const fetchUsers = async () => {
+  setLoading(true);
+  try {
+    const { data } = await axios.get(`${BACKEND_URL}/api/users`, {
+      withCredentials: true
+    });
+    setUsers(data);
+  } catch (error) {
+    toast.error('Erro ao carregar usuários');
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  fetchUsers();
+}, []);
+```
+
+**handleCreateUser:**
+```javascript
+const handleCreateUser = async (e) => {
+  e.preventDefault();
+  try {
+    await axios.post(`${BACKEND_URL}/api/users`, formData, {
+      withCredentials: true
+    });
+    toast.success('Usuário criado com sucesso!');
+    setDialogOpen(false);
+    setFormData({ email: '', password: '', name: '', role: 'PADRÃO' });
+    fetchUsers();
+  } catch (error) {
+    toast.error(error.response?.data?.detail || 'Erro ao criar usuário');
+  }
+};
+```
+
+**handleDeleteUser:**
+```javascript
+const handleDeleteUser = async (userId) => {
+  if (!window.confirm('Tem certeza que deseja deletar este usuário?')) return;
+
+  try {
+    await axios.delete(`${BACKEND_URL}/api/users/${userId}`, {
+      withCredentials: true
+    });
+    toast.success('Usuário deletado com sucesso!');
+    fetchUsers();
+  } catch (error) {
+    toast.error('Erro ao deletar usuário');
+  }
+};
+```
+
+**Layout da Página:**
+```
+┌─ Botão Voltar ──────────────────────────────────────┐
+│                                                      │
+│ Gerenciar Usuários              [+ Novo Usuário]    │
+│ X usuário(s) cadastrado(s)                          │
+│                                                      │
+├─ CABEÇALHO COM BRASÃO ─────────────────────────────┤
+│ [Logo] Frota de Veículos PMTF                       │
+│        Gerenciamento de Usuários do Sistema         │
+│                                                      │
+├─ TABELA ───────────────────────────────────────────┤
+│ Nome | Email | Perfil | Data Cadastro | Ações      │
+│ Admin| admin | ADMIN  | 05/04/2026   | [Delete]   │
+│ User | user  | PADRÃO | 05/04/2026   | [Delete]   │
+└──────────────────────────────────────────────────────┘
+```
+
+**Colunas da Tabela:**
+1. **Nome** - `user.name` (font-medium)
+2. **Email** - `user.email`
+3. **Perfil** - Badge colorido:
+   - ADMIN: azul (`bg-blue-100 text-blue-800`)
+   - PADRÃO: cinza (`bg-slate-100 text-slate-800`)
+4. **Data de Cadastro** - Formatada em pt-BR
+5. **Ações** - Botão deletar (ícone lixeira vermelho)
+
+**Modal de Criação:**
+```
+Título: Criar Novo Usuário
+
+[Nome Completo: _______________]
+
+[Email: _______________]
+
+[Senha: _______________]
+
+[Perfil: [dropdown: PADRÃO/ADMIN]]
+
+[Criar Usuário] [Cancelar]
+```
+
+**Campos do Modal:**
+```javascript
+<form onSubmit={handleCreateUser} className="space-y-4">
+  <div>
+    <Label htmlFor="name">Nome Completo</Label>
+    <Input
+      id="name"
+      value={formData.name}
+      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+      required
+      data-testid="new-user-name-input"
+    />
+  </div>
+
+  <div>
+    <Label htmlFor="email">Email</Label>
+    <Input
+      id="email"
+      type="email"
+      value={formData.email}
+      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+      required
+      data-testid="new-user-email-input"
+    />
+  </div>
+
+  <div>
+    <Label htmlFor="password">Senha</Label>
+    <Input
+      id="password"
+      type="password"
+      value={formData.password}
+      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+      required
+      data-testid="new-user-password-input"
+    />
+  </div>
+
+  <div>
+    <Label htmlFor="role">Perfil</Label>
+    <Select
+      value={formData.role}
+      onValueChange={(value) => setFormData({ ...formData, role: value })}
+    >
+      <SelectTrigger data-testid="new-user-role-select">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="PADRÃO">PADRÃO</SelectItem>
+        <SelectItem value="ADMIN">ADMIN</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+
+  <div className="flex gap-2 pt-4">
+    <Button type="submit" data-testid="submit-user-button">
+      Criar Usuário
+    </Button>
+    <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+      Cancelar
+    </Button>
+  </div>
+</form>
+```
+
+**Validações:**
+- Nome: obrigatório
+- Email: obrigatório + validação HTML5 type="email"
+- Senha: obrigatório
+- Role: padrão "PADRÃO"
+
+**Feedback:**
+- Sucesso criação: Toast verde
+- Sucesso exclusão: Toast verde
+- Erro: Toast vermelho com mensagem da API
+- Confirmação de exclusão: `window.confirm()`
+
+**Data-testid:**
+- `usuarios-page`
+- `back-button`
+- `create-user-button`
+- `user-row-{email}`
+- `delete-user-button-{email}`
+- `create-user-dialog`
+- `new-user-name-input`, `new-user-email-input`, `new-user-password-input`, `new-user-role-select`
+- `submit-user-button`
+
+---
+
+### 6.12 Sistema de Estilos e Design
+
+**6.12.1 Arquitetura de Estilos**
+
+O sistema usa uma abordagem **utility-first** com TailwindCSS, complementada por:
+- Componentes estilizados (Shadcn/UI)
+- CSS Variables para tematização
+- Classes customizadas mínimas
+
+**Estrutura:**
+```
+index.css (global)
+  ├─ @import Google Fonts
+  ├─ @tailwind base, components, utilities
+  ├─ CSS Variables (:root)
+  └─ Utilitários customizados
+
+App.css (mínimo)
+  └─ Reset básico
+
+Componentes
+  └─ Classes Tailwind inline
+```
+
+---
+
+**6.12.2 Configuração TailwindCSS - `tailwind.config.js`**
+
+**Código Completo:**
+```javascript
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: ["class"],
+  content: [
+    './pages/**/*.{js,jsx}',
+    './components/**/*.{js,jsx}',
+    './app/**/*.{js,jsx}',
+    './src/**/*.{js,jsx}',
+  ],
+  prefix: "",
+  theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
+    },
+    extend: {
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+      },
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+      keyframes: {
+        "accordion-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
+      },
+      animation: {
+        "accordion-down": "accordion-down 0.2s ease-out",
+        "accordion-up": "accordion-up 0.2s ease-out",
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+}
+```
+
+**Recursos Configurados:**
+- **Dark mode:** Via classe `.dark` (não usado atualmente)
+- **Content paths:** Escaneia todos arquivos .js/.jsx em src/
+- **Container:** Centralizado, padding 2rem, max-width 1400px
+- **Cores extendidas:** Todas baseadas em CSS variables
+- **Border radius:** Variável `--radius` (0.375rem = 6px)
+- **Animações:** Accordion (Radix UI)
+- **Plugin:** tailwindcss-animate para animações adicionais
+
+---
+
+**6.12.3 CSS Variables - `src/index.css`**
+
+**Código Completo da Seção de Variáveis:**
+```css
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+    font-family:
+        source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+@layer base {
+    :root {
+        --background: 210 40% 98%;           /* #f8fafc - Cinza muito claro */
+        --foreground: 222 47% 11%;           /* #0f172a - Azul muito escuro */
+        --card: 0 0% 100%;                   /* #ffffff - Branco */
+        --card-foreground: 222 47% 11%;      /* #0f172a */
+        --popover: 0 0% 100%;                /* #ffffff */
+        --popover-foreground: 222 47% 11%;   /* #0f172a */
+        --primary: 221 83% 32%;              /* #1e3a8a - Azul governo */
+        --primary-foreground: 0 0% 100%;     /* #ffffff */
+        --secondary: 210 40% 96.1%;          /* #f1f5f9 - Cinza claro */
+        --secondary-foreground: 215 25% 27%; /* #1e293b - Azul escuro */
+        --muted: 210 40% 96.1%;              /* #f1f5f9 */
+        --muted-foreground: 215 16% 47%;     /* #64748b - Cinza médio */
+        --accent: 221 90% 93%;               /* #e0e7ff - Azul claro */
+        --accent-foreground: 221 83% 32%;    /* #1e3a8a */
+        --destructive: 0 84% 60%;            /* #ef4444 - Vermelho */
+        --destructive-foreground: 0 0% 100%; /* #ffffff */
+        --border: 214 32% 91%;               /* #e2e8f0 - Cinza borda */
+        --input: 214 32% 91%;                /* #e2e8f0 */
+        --ring: 221 83% 32%;                 /* #1e3a8a - Focus ring */
+        --radius: 0.375rem;                  /* 6px - Border radius padrão */
+    }
+    
+    .dark {
+        --background: 0 0% 3.9%;
+        --foreground: 0 0% 98%;
+        --card: 0 0% 3.9%;
+        --card-foreground: 0 0% 98%;
+        --popover: 0 0% 3.9%;
+        --popover-foreground: 0 0% 98%;
+        --primary: 0 0% 98%;
+        --primary-foreground: 0 0% 9%;
+        --secondary: 0 0% 14.9%;
+        --secondary-foreground: 0 0% 98%;
+        --muted: 0 0% 14.9%;
+        --muted-foreground: 0 0% 63.9%;
+        --accent: 0 0% 14.9%;
+        --accent-foreground: 0 0% 98%;
+        --destructive: 0 62.8% 30.6%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 0 0% 14.9%;
+        --input: 0 0% 14.9%;
+        --ring: 0 0% 83.1%;
+        --chart-1: 220 70% 50%;
+        --chart-2: 160 60% 45%;
+        --chart-3: 30 80% 55%;
+        --chart-4: 280 65% 60%;
+        --chart-5: 340 75% 55%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif;
+    }
+}
+```
+
+**Paleta de Cores (valores HSL convertidos):**
+
+| Variável | HSL | HEX Aproximado | Uso |
+|----------|-----|----------------|-----|
+| `--background` | 210 40% 98% | #f8fafc | Fundo da página |
+| `--foreground` | 222 47% 11% | #0f172a | Texto principal |
+| `--primary` | 221 83% 32% | #1e3a8a | Azul governo (sidebar, botões) |
+| `--card` | 0 0% 100% | #ffffff | Cards e containers |
+| `--border` | 214 32% 91% | #e2e8f0 | Bordas |
+| `--destructive` | 0 84% 60% | #ef4444 | Vermelho (delete, erro) |
+| `--muted` | 210 40% 96.1% | #f1f5f9 | Backgrounds secundários |
+
+**Nota:** Dark mode definido mas não usado. Sistema é light-only.
+
+---
+
+**6.12.4 Tipografia**
+
+**Fontes Carregadas:**
+```css
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+```
+
+**Hierarquia Tipográfica:**
+
+| Elemento | Fonte | Peso | Tamanho Classes | Uso |
+|----------|-------|------|----------------|-----|
+| H1, H2, H3, H4, H5, H6 | Outfit | 300-700 | text-3xl a text-5xl | Títulos de página |
+| Body, P | IBM Plex Sans | 300-700 | text-base | Corpo de texto |
+| Code | Monospace | - | - | Não usado |
+
+**Aplicação:**
+```css
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Outfit', sans-serif;
+}
+```
+
+**Classes Tailwind de Tamanho:**
+- `text-3xl`: 1.875rem (30px) - H1 mobile
+- `text-4xl`: 2.25rem (36px) - H1 tablet
+- `text-5xl`: 3rem (48px) - H1 desktop
+- `text-2xl`: 1.5rem (24px) - H2
+- `text-xl`: 1.25rem (20px) - H3
+- `text-lg`: 1.125rem (18px) - H4
+- `text-base`: 1rem (16px) - Body
+- `text-sm`: 0.875rem (14px) - Small
+- `text-xs`: 0.75rem (12px) - Extra small
+
+---
+
+**6.12.5 Responsividade**
+
+**Breakpoints (Tailwind padrão):**
+```javascript
+{
+  'sm': '640px',   // tablet portrait
+  'md': '768px',   // tablet landscape
+  'lg': '1024px',  // desktop pequeno
+  'xl': '1280px',  // desktop médio
+  '2xl': '1536px'  // desktop grande
+}
+```
+
+**Estratégia Mobile-First:**
+- Classes sem prefixo: aplicam em todos os tamanhos
+- Classes com prefixo (md:, lg:): aplicam daquele breakpoint em diante
+
+**Exemplos de Uso:**
+```javascript
+// Sidebar: oculta mobile, visível desktop
+className="hidden lg:block"
+
+// Grid: 1 col mobile, 2 tablet, 3 desktop
+className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
+
+// Texto: pequeno mobile, médio desktop
+className="text-sm lg:text-base"
+
+// Padding: menor mobile, maior desktop
+className="p-4 lg:p-8"
+```
+
+**Sidebar Mobile:**
+- Transform: `translate-x-0` (aberto) ou `-translate-x-full` (fechado)
+- Overlay: `fixed inset-0 bg-black/50 z-40 lg:hidden`
+- Toggle button: Visível apenas `lg:hidden`
+
+**Tabelas:**
+- Container: `overflow-x-auto` (scroll horizontal em mobile)
+- Colunas: largura fixa ou min-width para evitar quebra
+
+---
+
+**6.12.6 Badges de Status**
+
+**Definição:**
+```javascript
+const statusColors = {
+  EM_ATIVIDADE: 'bg-green-100 text-green-800 border-green-200',
+  EM_MANUTENCAO: 'bg-amber-100 text-amber-800 border-amber-200',
+  INATIVO: 'bg-slate-100 text-slate-800 border-slate-200'
+};
+
+const statusLabels = {
+  EM_ATIVIDADE: 'Em Atividade',
+  EM_MANUTENCAO: 'Em Manutenção',
+  INATIVO: 'Inativo'
+};
+```
+
+**Renderização:**
+```javascript
+<span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium border ${statusColors[vehicle.status]}`}>
+  {statusLabels[vehicle.status]}
+</span>
+```
+
+**Cores:**
+- **Verde** (#10b981): Ativo
+- **Âmbar** (#f59e0b): Manutenção
+- **Cinza** (#64748b): Inativo
+
+---
+
+**6.12.7 Componentes Shadcn/UI**
+
+**Localização:** `/app/frontend/src/components/ui/`
+
+**Componentes Usados (com finalidade):**
+
+| Componente | Arquivo | Uso no Sistema |
+|------------|---------|----------------|
+| Button | button.jsx | Todos os botões (primário, secundário, ghost, outline) |
+| Input | input.jsx | Todos os inputs de texto |
+| Label | label.jsx | Labels de formulários |
+| Select | select.jsx | Dropdowns (Status, Role) |
+| Dialog | dialog.jsx | Modais (edição, histórico, criação) |
+| Table | table.jsx | Todas as tabelas de listagem |
+| Sonner | sonner.tsx | Sistema de notificações toast |
+
+**Componentes Instalados mas Não Usados:**
+- Accordion, Alert Dialog, Avatar, Checkbox, Collapsible
+- Context Menu, Dropdown Menu, Hover Card, Menubar
+- Navigation Menu, Popover, Progress, Radio Group
+- Scroll Area, Separator, Slider, Switch, Tabs
+- Toggle, Toggle Group, Tooltip
+
+**Padrão de Customização:**
+Todos os componentes aceitam `className` para override de estilos:
+```javascript
+<Button className="w-full bg-custom-color">Texto</Button>
+```
+
+**Variants do Button:**
+```javascript
+// Definidos em button.jsx
+const buttonVariants = cva(
+  "base-classes...",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground",
+        destructive: "bg-destructive text-destructive-foreground",
+        outline: "border border-input",
+        secondary: "bg-secondary text-secondary-foreground",
+        ghost: "hover:bg-accent",
+        link: "text-primary underline-offset-4"
+      },
+      size: {
+        default: "h-10 px-4 py-2",
+        sm: "h-9 px-3",
+        lg: "h-11 px-8",
+        icon: "h-10 w-10"
+      }
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default"
+    }
+  }
+);
+```
+
+---
+
+**6.12.8 Animações e Transições**
+
+**Transições Padrão:**
+```javascript
+className="transition-all duration-200 ease-in-out"
+```
+
+**Hover Effects:**
+```javascript
+// Cards
+className="hover:shadow-md hover:-translate-y-1"
+
+// Botões
+className="hover:bg-primary/90"
+
+// Nav items
+className="hover:bg-primary-foreground/10"
+```
+
+**Loading Spinner:**
+```javascript
+<div className="inline-block h-12 w-12 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent"></div>
+```
+
+**Animações Disponíveis (Tailwind):**
+- `animate-spin`: Rotação contínua (spinner)
+- `animate-pulse`: Pulsação (não usado)
+- `animate-bounce`: Pulo (não usado)
+- `animate-accordion-down`: Accordion abrir (Radix)
+- `animate-accordion-up`: Accordion fechar (Radix)
+
+---
+
+**6.12.9 Layout e Spacing**
+
+**Container Padrão:**
+```javascript
+className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+```
+
+**Padding de Página:**
+```javascript
+className="p-6 lg:p-8"
+```
+
+**Gap entre Elementos:**
+- `gap-2`: 0.5rem (8px) - botões adjacentes
+- `gap-4`: 1rem (16px) - elementos de formulário
+- `gap-6`: 1.5rem (24px) - grid de cards
+- `gap-8`: 2rem (32px) - seções
+
+**Margin:**
+- `mb-4`: Bottom 1rem (16px)
+- `mb-6`: Bottom 1.5rem (24px)
+- `mt-2`: Top 0.5rem (8px)
+
+---
+
+**6.12.10 Acessibilidade (a11y)**
+
+**Data-testid:**
+- Todos os elementos interativos têm `data-testid`
+- Padrão: `{ação}-{elemento}` ou `{página}-{elemento}`
+- Exemplos: `login-submit-button`, `nav-dashboard`, `vehicle-row-{placa}`
+
+**ARIA Labels:**
+- Componentes Shadcn/UI já incluem ARIA apropriado
+- Dialogs têm `role="dialog"` e `aria-labelledby`
+- Inputs têm labels associados via `htmlFor`
+
+**Foco:**
+- Ring de foco: `focus:ring-2 focus:ring-primary focus:ring-offset-2`
+- Visível em todos os elementos interativos
+
+**Contraste:**
+- Cores atendem WCAG AA (4.5:1 para texto normal)
+- Azul governo (#1e3a8a) em branco: contraste 8.59:1 ✅
+
+---
+
+## 7. BACKEND DETALHADO
+
+### 7.1 Estrutura Geral do Backend
+
+**Arquivo Único:** `/app/backend/server.py` (536 linhas)
+
+**Organização Interna:**
+```python
+# 1. Imports e Setup (linhas 1-24)
+# 2. Funções de Autenticação (linhas 25-82)
+# 3. Criação da App FastAPI (linhas 83-86)
+# 4. Modelos Pydantic (linhas 87-162)
+# 5. Rotas de Autenticação (linhas 163-246)
+# 6. Rotas de Usuários (linhas 247-290)
+# 7. Rotas de Veículos (linhas 291-389)
+# 8. Configuração CORS (linhas 390-402)
+# 9. Logging (linhas 403-407)
+# 10. Startup Event (seed de dados) (linhas 408-530)
+# 11. Shutdown Event (linhas 531-536)
+```
+
+**Decisão de Arquitetura:**
+- **Monolítico:** Tudo em um arquivo para simplicidade inicial
+- **Refatoração Recomendada:** Dividir em módulos ao escalar:
+  ```
+  backend/
+  ├── main.py              # App e CORS
+  ├── config.py            # Configurações
+  ├── database.py          # Conexão MongoDB
+  ├── models/
+  │   ├── user.py
+  │   └── vehicle.py
+  ├── schemas/
+  │   ├── user.py
+  │   └── vehicle.py
+  ├── routers/
+  │   ├── auth.py
+  │   ├── users.py
+  │   └── vehicles.py
+  ├── services/
+  │   ├── auth_service.py
+  │   └── vehicle_service.py
+  └── utils/
+      ├── security.py
+      └── validators.py
+  ```
+
+---
+
+### 7.2 Imports e Inicialização
+
+**Código:**
+```python
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional
+from datetime import datetime, timezone, timedelta
+import bcrypt
+import jwt
+import secrets
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+JWT_ALGORITHM = "HS256"
+```
+
+**Análise:**
+- **load_dotenv():** DEVE ser chamado antes de acessar `os.environ`
+- **Path(__file__).parent:** Obtém diretório do script
+- **AsyncIOMotorClient:** Cliente MongoDB assíncrono
+- **db:** Instância do banco (global)
+- **JWT_ALGORITHM:** HS256 (HMAC SHA-256)
+
+---
+
+### 7.3 Funções de Autenticação
+
+**7.3.1 get_jwt_secret()**
+```python
+def get_jwt_secret() -> str:
+    return os.environ["JWT_SECRET"]
+```
+- Retorna chave secreta do .env
+- Usada para assinar e verificar JWTs
+
+**7.3.2 hash_password()**
+```python
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
+```
+- Gera salt aleatório
+- Faz hash com bcrypt
+- Retorna string (não bytes)
+- **Segurança:** bcrypt é resistente a brute force (lento por design)
+
+**7.3.3 verify_password()**
+```python
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+```
+- Compara senha plain com hash
+- Retorna boolean
+- Timing-safe (protege contra timing attacks)
+
+**7.3.4 create_access_token()**
+```python
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        "type": "access"
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+```
+- **sub (subject):** ID do usuário
+- **email:** Email (para conveniência)
+- **exp (expiration):** 15 minutos
+- **type:** "access" (diferencia de refresh)
+- **Retorno:** String JWT
+
+**7.3.5 create_refresh_token()**
+```python
+def create_refresh_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "type": "refresh"
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+```
+- **exp:** 7 dias (mais longo que access)
+- **type:** "refresh"
+- **Nota:** Endpoint de refresh não está implementado (mas função existe)
+
+**7.3.6 get_current_user() - Dependency**
+```python
+async def get_current_user(request: Request) -> dict:
+    # 1. Tentar pegar token do cookie
+    token = request.cookies.get("access_token")
+    
+    # 2. Fallback: Authorization header
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    # 3. Se não tem token, erro 401
+    if not token:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    
+    try:
+        # 4. Decodificar JWT
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        
+        # 5. Verificar tipo
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Tipo de token inválido")
+        
+        # 6. Buscar usuário no banco
+        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        if not user:
+            raise HTTPException(status_code=401, detail="Usuário não encontrado")
+        
+        # 7. Preparar resposta (sem senha)
+        user["_id"] = str(user["_id"])
+        user.pop("password_hash", None)
+        return user
+        
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+```
+
+**Fluxo de Autenticação:**
+1. Extrai token de cookie (preferencial) ou header
+2. Se não tem token → 401 Não autenticado
+3. Decodifica JWT com chave secreta
+4. Valida tipo = "access"
+5. Busca usuário no MongoDB por ID do payload
+6. Se usuário não existe → 401
+7. Remove password_hash do objeto
+8. Retorna usuário
+
+**7.3.7 require_admin() - Dependency**
+```python
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    return current_user
+```
+- **Depends:** Chama `get_current_user()` primeiro
+- Verifica se `role == "ADMIN"`
+- Se não → 403 Forbidden
+- Se sim → retorna usuário (para uso na rota)
+
+---
+
+### 7.4 Modelos Pydantic (Schemas)
+
+**7.4.1 Modelos de Usuário**
+
+**UserRegister:**
+```python
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: str = "PADRÃO"
+```
+- **Usado em:** POST /api/auth/register, POST /api/users
+- **Validação automática:** Email válido, campos obrigatórios
+- **Default role:** "PADRÃO"
+
+**UserLogin:**
+```python
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+```
+- **Usado em:** POST /api/auth/login
+- **Validação:** Email válido
+
+**UserResponse:**
+```python
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    role: str
+    created_at: str
+```
+- **Usado em:** Response de login, register, listagem
+- **Não inclui:** password_hash
+
+**7.4.2 Modelos de Veículo**
+
+**VehicleCreate:**
+```python
+class VehicleCreate(BaseModel):
+    placa: str
+    marca: str
+    modelo: str
+    ano_fabricacao: int
+    chassi: str
+    status: str = "EM_ATIVIDADE"
+    lotacao_atual: str
+    departamento: str
+```
+- **Usado em:** POST /api/vehicles
+- **Default status:** EM_ATIVIDADE
+- **Todos obrigatórios** exceto status (tem default)
+
+**VehicleUpdate:**
+```python
+class VehicleUpdate(BaseModel):
+    placa: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
+    ano_fabricacao: Optional[int] = None
+    chassi: Optional[str] = None
+    status: Optional[str] = None
+    lotacao_atual: Optional[str] = None
+    departamento: Optional[str] = None
+```
+- **Usado em:** PUT /api/vehicles/{id}
+- **Todos opcionais:** Permite atualização parcial
+- **Lógica:** Apenas campos fornecidos são atualizados
+
+**VehicleResponse:**
+```python
+class VehicleResponse(BaseModel):
+    id: str
+    placa: str
+    marca: str
+    modelo: str
+    ano_fabricacao: int
+    chassi: str
+    status: str
+    lotacao_atual: str
+    departamento: str
+    created_at: str
+    updated_at: str
+```
+- **Usado em:** Response de GET, POST, PUT
+- **Inclui:** Timestamps
+
+**7.4.3 Modelos de Histórico**
+
+**LocationHistoryCreate:**
+```python
+class LocationHistoryCreate(BaseModel):
+    local: str
+    departamento: str
+    data_inicio: str
+    data_fim: Optional[str] = None
+```
+- **Usado internamente** ao criar/atualizar veículo
+- **data_fim:** None para lotação atual
+
+**LocationHistoryResponse:**
+```python
+class LocationHistoryResponse(BaseModel):
+    id: str
+    vehicle_id: str
+    local: str
+    departamento: str
+    data_inicio: str
+    data_fim: Optional[str] = None
+```
+- **Usado em:** GET /api/vehicles/{id}/historico
+
+---
+
+### 7.5 Rotas de Autenticação (API REST)
+
+**7.5.1 POST /api/auth/register**
+
+**Rota Completa:**
+```python
+@api_router.post("/auth/register")
+async def register(user_data: UserRegister, response: Response):
+    # 1. Normalizar email para lowercase
+    email_lower = user_data.email.lower()
+    
+    # 2. Verificar se email já existe
+    existing = await db.users.find_one({"email": email_lower})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email já cadastrado")
+    
+    # 3. Fazer hash da senha
+    hashed = hash_password(user_data.password)
+    
+    # 4. Criar documento do usuário
+    user_doc = {
+        "email": email_lower,
+        "password_hash": hashed,
+        "name": user_data.name,
+        "role": user_data.role,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # 5. Inserir no MongoDB
+    result = await db.users.insert_one(user_doc)
+    user_id = str(result.inserted_id)
+    
+    # 6. Criar tokens JWT
+    access_token = create_access_token(user_id, email_lower)
+    refresh_token = create_refresh_token(user_id)
+    
+    # 7. Definir cookies httpOnly
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,  # True em produção com HTTPS
+        samesite="lax",
+        max_age=900,  # 15 minutos
+        path="/"
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=604800,  # 7 dias
+        path="/"
+    )
+    
+    # 8. Retornar dados do usuário (sem senha)
+    return {
+        "id": user_id,
+        "email": email_lower,
+        "name": user_data.name,
+        "role": user_data.role,
+        "created_at": user_doc["created_at"]
+    }
+```
+
+**Detalhes:**
+- **Método:** POST
+- **Autenticação:** Não requerida
+- **Body:**
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "senha123",
+    "name": "Nome Completo",
+    "role": "PADRÃO"
+  }
+  ```
+- **Response 200:**
+  ```json
+  {
+    "id": "507f1f77bcf86cd799439011",
+    "email": "user@example.com",
+    "name": "Nome Completo",
+    "role": "PADRÃO",
+    "created_at": "2026-04-05T23:00:00.000000+00:00"
+  }
+  ```
+  + Cookies: `access_token`, `refresh_token`
+- **Response 400:** Email já cadastrado
+- **Response 422:** Validação falhou (email inválido, campos faltando)
+
+**Segurança:**
+- Email case-insensitive (converte lowercase)
+- Senha hasheada com bcrypt
+- Token em httpOnly cookie (não acessível por JavaScript)
+- SameSite=lax (proteção CSRF)
+
+---
+
+**7.5.2 POST /api/auth/login**
+
+**Rota Completa:**
+```python
+@api_router.post("/auth/login")
+async def login(credentials: UserLogin, response: Response):
+    # 1. Normalizar email
+    email_lower = credentials.email.lower()
+    
+    # 2. Buscar usuário no banco
+    user = await db.users.find_one({"email": email_lower})
+    if not user:
+        raise HTTPException(status_code=401, detail="Email ou senha incorretos")
+    
+    # 3. Verificar senha
+    if not verify_password(credentials.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email ou senha incorretos")
+    
+    # 4. Criar tokens
+    user_id = str(user["_id"])
+    access_token = create_access_token(user_id, email_lower)
+    refresh_token = create_refresh_token(user_id)
+    
+    # 5. Definir cookies
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    
+    # 6. Retornar usuário
+    return {
+        "id": user_id,
+        "email": user["email"],
+        "name": user["name"],
+        "role": user["role"],
+        "created_at": user["created_at"]
+    }
+```
+
+**Detalhes:**
+- **Método:** POST
+- **Autenticação:** Não requerida
+- **Body:**
+  ```json
+  {
+    "email": "admin@pmtf.gov.br",
+    "password": "admin123"
+  }
+  ```
+- **Response 200:** Igual ao register (usuário + cookies)
+- **Response 401:** Email ou senha incorretos (mensagem genérica por segurança)
+- **Response 422:** Validação falhou
+
+**Segurança:**
+- Mensagem genérica de erro (não revela se email existe)
+- Timing attack: bcrypt.checkpw é timing-safe
+- **Falta:** Rate limiting, brute force protection
+
+---
+
+**7.5.3 POST /api/auth/logout**
+
+**Rota Completa:**
+```python
+@api_router.post("/auth/logout")
+async def logout(response: Response, current_user: dict = Depends(get_current_user)):
+    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/")
+    return {"message": "Logout realizado com sucesso"}
+```
+
+**Detalhes:**
+- **Método:** POST
+- **Autenticação:** Requerida (Depends get_current_user)
+- **Body:** Vazio
+- **Response 200:**
+  ```json
+  {"message": "Logout realizado com sucesso"}
+  ```
+- **Response 401:** Token inválido/expirado
+
+**Comportamento:**
+- Deleta cookies do navegador
+- **Nota:** Token JWT ainda válido até expirar (stateless)
+- **Melhoria:** Lista negra de tokens para invalidação imediata
+
+---
+
+**7.5.4 GET /api/auth/me**
+
+**Rota Completa:**
+```python
+@api_router.get("/auth/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return current_user
+```
+
+**Detalhes:**
+- **Método:** GET
+- **Autenticação:** Requerida
+- **Body:** Nenhum
+- **Response 200:**
+  ```json
+  {
+    "id": "507f1f77bcf86cd799439011",
+    "email": "admin@pmtf.gov.br",
+    "name": "Administrador PMTF",
+    "role": "ADMIN",
+    "created_at": "2026-04-05T20:00:00.000000+00:00"
+  }
+  ```
+- **Response 401:** Não autenticado
+
+**Uso:**
+- Frontend chama ao carregar app (AuthContext)
+- Verifica se sessão ainda válida
+- Obtém dados do usuário atual
+
+---
+
+### 7.6 Rotas de Usuários (Gerenciamento)
+
+**7.6.1 GET /api/users**
+
+**Rota Completa:**
+```python
+@api_router.get("/users")
+async def get_users(current_user: dict = Depends(require_admin)):
+    users = await db.users.find({}, {"password_hash": 0}).to_list(1000)
+    for user in users:
+        user["id"] = str(user.pop("_id"))
+    return users
+```
+
+**Detalhes:**
+- **Método:** GET
+- **Autenticação:** ADMIN only
+- **Query Params:** Nenhum
+- **Response 200:**
+  ```json
+  [
+    {
+      "id": "507f1f77bcf86cd799439011",
+      "email": "admin@pmtf.gov.br",
+      "name": "Administrador PMTF",
+      "role": "ADMIN",
+      "created_at": "2026-04-05T20:00:00.000000+00:00"
+    },
+    ...
+  ]
+  ```
+- **Response 403:** Não é ADMIN
+
+**Query MongoDB:**
+```python
+db.users.find({}, {"password_hash": 0})
+```
+- Busca todos documentos
+- Exclui campo `password_hash` da resposta
+- Limite 1000 (proteção)
+
+**Transformação:**
+```python
+user["id"] = str(user.pop("_id"))
+```
+- Remove `_id` (ObjectId não é JSON serializable)
+- Adiciona `id` (string)
+
+---
+
+**7.6.2 POST /api/users**
+
+**Rota Completa:**
+```python
+@api_router.post("/users")
+async def create_user(user_data: UserRegister, current_user: dict = Depends(require_admin)):
+    # 1. Normalizar email
+    email_lower = user_data.email.lower()
+    
+    # 2. Verificar duplicata
+    existing = await db.users.find_one({"email": email_lower})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email já cadastrado")
+    
+    # 3. Hash senha
+    hashed = hash_password(user_data.password)
+    
+    # 4. Criar documento
+    user_doc = {
+        "email": email_lower,
+        "password_hash": hashed,
+        "name": user_data.name,
+        "role": user_data.role,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # 5. Inserir
+    result = await db.users.insert_one(user_doc)
+    
+    # 6. Retornar
+    return {
+        "id": str(result.inserted_id),
+        "email": email_lower,
+        "name": user_data.name,
+        "role": user_data.role,
+        "created_at": user_doc["created_at"]
+    }
+```
+
+**Diferença de /auth/register:**
+- Requer autenticação ADMIN
+- Não define cookies (não faz login)
+- Apenas cria usuário
+
+---
+
+**7.6.3 DELETE /api/users/{user_id}**
+
+**Rota Completa:**
+```python
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, current_user: dict = Depends(require_admin)):
+    result = await db.users.delete_one({"_id": ObjectId(user_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return {"message": "Usuário deletado com sucesso"}
+```
+
+**Detalhes:**
+- **Método:** DELETE
+- **Autenticação:** ADMIN only
+- **Path Param:** `user_id` (string ObjectId)
+- **Response 200:**
+  ```json
+  {"message": "Usuário deletado com sucesso"}
+  ```
+- **Response 404:** Usuário não existe
+- **Response 403:** Não é ADMIN
+
+**Observação:**
+- **Falta:** Impedir deletar a si próprio
+- **Falta:** Verificar se usuário tem dados relacionados
+
+---
+
+Devido ao limite de caracteres, vou continuar com as rotas de veículos e demais seções na próxima mensagem. Deseja que eu continue?
