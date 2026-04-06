@@ -3809,6 +3809,1458 @@ async def delete_user(user_id: str, current_user: dict = Depends(require_admin))
 - **Falta:** Impedir deletar a si próprio
 - **Falta:** Verificar se usuário tem dados relacionados
 
+Continuando a documentação técnica completa:
+
 ---
 
-Devido ao limite de caracteres, vou continuar com as rotas de veículos e demais seções na próxima mensagem. Deseja que eu continue?
+### 7.7 Rotas de Veículos
+
+**7.7.1 POST /api/vehicles**
+
+**Rota Completa:**
+```python
+@api_router.post("/vehicles")
+async def create_vehicle(vehicle_data: VehicleCreate, current_user: dict = Depends(require_admin)):
+    # 1. Converter Pydantic model para dict
+    vehicle_doc = vehicle_data.model_dump()
+    
+    # 2. Adicionar timestamps
+    vehicle_doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    vehicle_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    # 3. Inserir veículo no MongoDB
+    result = await db.vehicles.insert_one(vehicle_doc)
+    
+    # 4. Criar entrada inicial no histórico
+    history_doc = {
+        "vehicle_id": str(result.inserted_id),
+        "local": vehicle_data.lotacao_atual,
+        "departamento": vehicle_data.departamento,
+        "data_inicio": datetime.now(timezone.utc).isoformat(),
+        "data_fim": None  # Lotação atual (sem data fim)
+    }
+    await db.location_history.insert_one(history_doc)
+    
+    # 5. Preparar resposta
+    vehicle_doc["id"] = str(result.inserted_id)
+    vehicle_doc.pop("_id", None)
+    
+    return vehicle_doc
+```
+
+**Detalhes:**
+- **Método:** POST
+- **Autenticação:** ADMIN only
+- **Body:**
+  ```json
+  {
+    "placa": "ABC-1234",
+    "marca": "Toyota",
+    "modelo": "Hilux",
+    "ano_fabricacao": 2020,
+    "chassi": "9BWZZZ377VT004251",
+    "status": "EM_ATIVIDADE",
+    "lotacao_atual": "Secretaria de Saúde",
+    "departamento": "Departamento de Vigilância Sanitária"
+  }
+  ```
+- **Response 201:**
+  ```json
+  {
+    "id": "507f1f77bcf86cd799439011",
+    "placa": "ABC-1234",
+    "marca": "Toyota",
+    "modelo": "Hilux",
+    "ano_fabricacao": 2020,
+    "chassi": "9BWZZZ377VT004251",
+    "status": "EM_ATIVIDADE",
+    "lotacao_atual": "Secretaria de Saúde",
+    "departamento": "Departamento de Vigilância Sanitária",
+    "created_at": "2026-04-05T23:00:00.000000+00:00",
+    "updated_at": "2026-04-05T23:00:00.000000+00:00"
+  }
+  ```
+- **Response 403:** Não é ADMIN
+- **Response 422:** Validação falhou
+
+**Regras de Negócio:**
+1. Timestamps UTC automáticos
+2. Histórico criado automaticamente na primeira lotação
+3. `data_fim = None` indica lotação atual
+
+**Validações Pydantic:**
+- `placa`, `marca`, `modelo`, `chassi`, `lotacao_atual`, `departamento`: strings obrigatórias
+- `ano_fabricacao`: inteiro obrigatório
+- `status`: string com default "EM_ATIVIDADE"
+
+---
+
+**7.7.2 GET /api/vehicles**
+
+**Rota Completa:**
+```python
+@api_router.get("/vehicles")
+async def get_all_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    # 1. Construir query dinâmica
+    query = {}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}  # Case-insensitive
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    # 2. Buscar veículos
+    vehicles = await db.vehicles.find(query).to_list(1000)
+    
+    # 3. Transformar ObjectId em string
+    for vehicle in vehicles:
+        vehicle["id"] = str(vehicle.pop("_id"))
+    
+    return vehicles
+```
+
+**Detalhes:**
+- **Método:** GET
+- **Autenticação:** Qualquer usuário autenticado
+- **Query Params:**
+  - `placa` (opcional): Filtro parcial case-insensitive
+  - `marca` (opcional): Filtro parcial case-insensitive
+- **Exemplos:**
+  - `GET /api/vehicles` → Todos
+  - `GET /api/vehicles?placa=ABC` → Placas contendo "ABC"
+  - `GET /api/vehicles?marca=toyota` → Marca contendo "toyota"
+  - `GET /api/vehicles?placa=ABC&marca=ford` → Ambos filtros
+
+**Query MongoDB com Filtros:**
+```python
+# Placa = "ABC"
+{"placa": {"$regex": "ABC", "$options": "i"}}
+
+# Marca = "toyota"
+{"marca": {"$regex": "toyota", "$options": "i"}}
+
+# Ambos
+{
+  "placa": {"$regex": "ABC", "$options": "i"},
+  "marca": {"$regex": "toyota", "$options": "i"}
+}
+```
+
+**Regex Flags:**
+- `$options: "i"` → Case-insensitive
+- Permite busca parcial (substring match)
+
+**Limite:**
+- `to_list(1000)` → Máximo 1000 veículos
+- Proteção contra queries muito grandes
+
+---
+
+**7.7.3 GET /api/vehicles/em-atividade**
+
+**Rota Completa:**
+```python
+@api_router.get("/vehicles/em-atividade")
+async def get_active_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "EM_ATIVIDADE"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
+    for vehicle in vehicles:
+        vehicle["id"] = str(vehicle.pop("_id"))
+    return vehicles
+```
+
+**Diferença da rota anterior:**
+- Adiciona filtro fixo: `"status": "EM_ATIVIDADE"`
+- Aceita mesmos query params (placa, marca)
+
+---
+
+**7.7.4 GET /api/vehicles/em-manutencao**
+
+**Rota Completa:**
+```python
+@api_router.get("/vehicles/em-manutencao")
+async def get_maintenance_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "EM_MANUTENCAO"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
+    for vehicle in vehicles:
+        vehicle["id"] = str(vehicle.pop("_id"))
+    return vehicles
+```
+
+**Filtro fixo:** `"status": "EM_MANUTENCAO"`
+
+---
+
+**7.7.5 GET /api/vehicles/inativos**
+
+**Rota Completa:**
+```python
+@api_router.get("/vehicles/inativos")
+async def get_inactive_vehicles(
+    current_user: dict = Depends(get_current_user),
+    placa: Optional[str] = None,
+    marca: Optional[str] = None
+):
+    query = {"status": "INATIVO"}
+    if placa:
+        query["placa"] = {"$regex": placa, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca, "$options": "i"}
+    
+    vehicles = await db.vehicles.find(query).to_list(1000)
+    for vehicle in vehicles:
+        vehicle["id"] = str(vehicle.pop("_id"))
+    return vehicles
+```
+
+**Filtro fixo:** `"status": "INATIVO"`
+
+---
+
+**7.7.6 PUT /api/vehicles/{vehicle_id}**
+
+**Rota Completa:**
+```python
+@api_router.put("/vehicles/{vehicle_id}")
+async def update_vehicle(vehicle_id: str, vehicle_data: VehicleUpdate, current_user: dict = Depends(require_admin)):
+    # 1. Filtrar apenas campos fornecidos (não None)
+    update_data = {k: v for k, v in vehicle_data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
+    
+    # 2. Adicionar timestamp de atualização
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    # 3. Se lotação ou departamento mudaram
+    if "lotacao_atual" in update_data or "departamento" in update_data:
+        # 3a. Buscar veículo atual
+        current_vehicle = await db.vehicles.find_one({"_id": ObjectId(vehicle_id)})
+        if not current_vehicle:
+            raise HTTPException(status_code=404, detail="Veículo não encontrado")
+        
+        # 3b. Determinar nova lotação/departamento
+        new_lotacao = update_data.get("lotacao_atual", current_vehicle.get("lotacao_atual"))
+        new_departamento = update_data.get("departamento", current_vehicle.get("departamento"))
+        
+        # 3c. Finalizar lotação anterior (definir data_fim)
+        await db.location_history.update_many(
+            {"vehicle_id": vehicle_id, "data_fim": None},
+            {"$set": {"data_fim": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        # 3d. Criar nova entrada de histórico
+        history_doc = {
+            "vehicle_id": vehicle_id,
+            "local": new_lotacao,
+            "departamento": new_departamento,
+            "data_inicio": datetime.now(timezone.utc).isoformat(),
+            "data_fim": None
+        }
+        await db.location_history.insert_one(history_doc)
+    
+    # 4. Atualizar veículo
+    result = await db.vehicles.update_one(
+        {"_id": ObjectId(vehicle_id)},
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Veículo não encontrado")
+    
+    # 5. Retornar veículo atualizado
+    updated_vehicle = await db.vehicles.find_one({"_id": ObjectId(vehicle_id)})
+    updated_vehicle["id"] = str(updated_vehicle.pop("_id"))
+    return updated_vehicle
+```
+
+**Detalhes:**
+- **Método:** PUT
+- **Autenticação:** ADMIN only
+- **Path Param:** `vehicle_id` (string ObjectId)
+- **Body:** Todos campos opcionais
+  ```json
+  {
+    "status": "EM_MANUTENCAO",
+    "lotacao_atual": "Oficina Municipal",
+    "departamento": "Setor de Manutenção"
+  }
+  ```
+- **Response 200:** Veículo atualizado completo
+- **Response 400:** Nenhum campo fornecido
+- **Response 404:** Veículo não existe
+- **Response 403:** Não é ADMIN
+
+**Lógica de Histórico:**
+1. Se `lotacao_atual` OU `departamento` mudaram:
+2. Busca veículo atual para pegar valores antigos (se campo não fornecido)
+3. Finaliza lotações anteriores (define `data_fim = agora`)
+4. Cria nova entrada com `data_fim = None` (lotação atual)
+
+**Exemplo de Atualização Parcial:**
+```json
+// Body
+{"status": "EM_MANUTENCAO"}
+
+// update_data
+{
+  "status": "EM_MANUTENCAO",
+  "updated_at": "2026-04-05T23:30:00.000000+00:00"
+}
+
+// MongoDB $set
+db.vehicles.update_one(
+  {"_id": ObjectId("...")},
+  {"$set": {"status": "EM_MANUTENCAO", "updated_at": "..."}}
+)
+```
+
+---
+
+**7.7.7 DELETE /api/vehicles/{vehicle_id}**
+
+**Rota Completa:**
+```python
+@api_router.delete("/vehicles/{vehicle_id}")
+async def delete_vehicle(vehicle_id: str, current_user: dict = Depends(require_admin)):
+    # 1. Deletar veículo
+    result = await db.vehicles.delete_one({"_id": ObjectId(vehicle_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Veículo não encontrado")
+    
+    # 2. Deletar histórico relacionado
+    await db.location_history.delete_many({"vehicle_id": vehicle_id})
+    
+    return {"message": "Veículo deletado com sucesso"}
+```
+
+**Detalhes:**
+- **Método:** DELETE
+- **Autenticação:** ADMIN only
+- **Path Param:** `vehicle_id`
+- **Response 200:**
+  ```json
+  {"message": "Veículo deletado com sucesso"}
+  ```
+- **Response 404:** Veículo não existe
+- **Response 403:** Não é ADMIN
+
+**Cascata:**
+- Deleta veículo
+- Deleta TODO histórico de lotação relacionado
+- **Nota:** Operação irreversível (sem soft delete)
+
+---
+
+**7.7.8 GET /api/vehicles/{vehicle_id}/historico**
+
+**Rota Completa:**
+```python
+@api_router.get("/vehicles/{vehicle_id}/historico")
+async def get_vehicle_history(vehicle_id: str, current_user: dict = Depends(get_current_user)):
+    # 1. Buscar histórico ordenado por data (mais recente primeiro)
+    history = await db.location_history.find(
+        {"vehicle_id": vehicle_id}
+    ).sort("data_inicio", -1).to_list(1000)
+    
+    # 2. Transformar _id em id
+    for entry in history:
+        entry["id"] = str(entry.pop("_id"))
+    
+    return history
+```
+
+**Detalhes:**
+- **Método:** GET
+- **Autenticação:** Qualquer usuário autenticado
+- **Path Param:** `vehicle_id`
+- **Response 200:**
+  ```json
+  [
+    {
+      "id": "507f1f77bcf86cd799439012",
+      "vehicle_id": "507f1f77bcf86cd799439011",
+      "local": "Secretaria de Saúde",
+      "departamento": "Departamento de Vigilância Sanitária",
+      "data_inicio": "2026-04-05T23:00:00.000000+00:00",
+      "data_fim": null
+    },
+    {
+      "id": "507f1f77bcf86cd799439013",
+      "vehicle_id": "507f1f77bcf86cd799439011",
+      "local": "Secretaria de Obras",
+      "departamento": "Departamento de Infraestrutura",
+      "data_inicio": "2026-01-15T10:00:00.000000+00:00",
+      "data_fim": "2026-04-05T23:00:00.000000+00:00"
+    }
+  ]
+  ```
+- **Ordenação:** `data_inicio` descendente (mais recente primeiro)
+
+**Interpretação:**
+- `data_fim = null` → Lotação ATUAL
+- `data_fim != null` → Lotação PASSADA
+
+---
+
+### 7.8 Configuração CORS
+
+**Código Completo:**
+```python
+# Lê CORS_ORIGINS do .env
+cors_origins = os.environ.get('CORS_ORIGINS', '*')
+
+# Se wildcard, permite todos
+if cors_origins == '*':
+    allow_origins = ['*']
+else:
+    # Se lista separada por vírgula, divide
+    allow_origins = cors_origins.split(',')
+
+# Adiciona middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,  # Permite cookies
+    allow_origins=allow_origins,
+    allow_methods=["*"],     # Todos métodos HTTP
+    allow_headers=["*"],     # Todos headers
+)
+```
+
+**Análise:**
+- **allow_credentials=True:** ESSENCIAL para cookies funcionarem
+- **allow_origins:** Lista de origens permitidas
+  - Desenvolvimento: `['*']` (todos)
+  - Produção: `['https://frota.pmtf.gov.br']`
+- **allow_methods:** `["*"]` permite GET, POST, PUT, DELETE, OPTIONS
+- **allow_headers:** `["*"]` permite Authorization, Content-Type, etc.
+
+**Importante:**
+- Se `allow_credentials=True`, não pode usar `allow_origins=['*']` em produção
+- Deve especificar origens exatas: `['https://domain.com']`
+- Browsers fazem preflight (OPTIONS) automaticamente
+
+**Variável de Ambiente:**
+```env
+# Desenvolvimento
+CORS_ORIGINS="*"
+
+# Produção - origem única
+CORS_ORIGINS="https://frota.pmtf.gov.br"
+
+# Produção - múltiplas origens
+CORS_ORIGINS="https://frota.pmtf.gov.br,https://admin.pmtf.gov.br"
+```
+
+---
+
+### 7.9 Logging
+
+**Configuração:**
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+```
+
+**Uso:**
+```python
+logger.info(f"Admin user criado: {admin_email}")
+logger.info(f"Veículo de teste criado: {vehicle['placa']}")
+```
+
+**Níveis:**
+- INFO: Eventos normais
+- WARNING: Avisos (não usado)
+- ERROR: Erros (não usado explicitamente)
+
+**Output:**
+```
+2026-04-05 23:00:00,123 - __main__ - INFO - Admin user criado: admin@pmtf.gov.br
+2026-04-05 23:00:05,456 - __main__ - INFO - Veículo de teste criado: ABC-1234
+```
+
+**Melhoria Recomendada:**
+- Logging estruturado (JSON)
+- Diferentes níveis por ambiente
+- Logs de erro com stack trace
+- Logs de acesso (integrar com Uvicorn)
+
+---
+
+### 7.10 Startup Event (Seed de Dados)
+
+**Código Completo:**
+```python
+@app.on_event("startup")
+async def startup_event():
+    # 1. Criar índices
+    await db.users.create_index("email", unique=True)
+    await db.vehicles.create_index("placa")
+    await db.location_history.create_index("vehicle_id")
+    
+    # 2. Seed de admin user (idempotente)
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@pmtf.gov.br")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    
+    if existing is None:
+        # Admin não existe, criar
+        hashed = hash_password(admin_password)
+        await db.users.insert_one({
+            "email": admin_email,
+            "password_hash": hashed,
+            "name": "Administrador PMTF",
+            "role": "ADMIN",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        logger.info(f"Admin user criado: {admin_email}")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        # Admin existe mas senha diferente, atualizar
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {"password_hash": hash_password(admin_password)}}
+        )
+        logger.info("Senha do admin atualizada")
+    
+    # 3. Seed de usuário padrão
+    test_user_email = "usuario@pmtf.gov.br"
+    test_user_password = "usuario123"
+    test_user = await db.users.find_one({"email": test_user_email})
+    
+    if test_user is None:
+        hashed = hash_password(test_user_password)
+        await db.users.insert_one({
+            "email": test_user_email,
+            "password_hash": hashed,
+            "name": "Usuário Padrão",
+            "role": "PADRÃO",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        logger.info(f"Usuário de teste criado: {test_user_email}")
+    
+    # 4. Seed de veículos de teste
+    test_vehicles = [
+        {
+            "placa": "ABC-1234",
+            "marca": "Chevrolet",
+            "modelo": "S10",
+            "ano_fabricacao": 2020,
+            "chassi": "9BWZZZ377VT004251",
+            "status": "EM_ATIVIDADE",
+            "lotacao_atual": "Secretaria de Saúde",
+            "departamento": "Departamento de Vigilância Sanitária",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        },
+        # ... outros 3 veículos
+    ]
+    
+    for vehicle in test_vehicles:
+        existing_vehicle = await db.vehicles.find_one({"placa": vehicle["placa"]})
+        if existing_vehicle is None:
+            # Veículo não existe, criar
+            result = await db.vehicles.insert_one(vehicle)
+            await db.location_history.insert_one({
+                "vehicle_id": str(result.inserted_id),
+                "local": vehicle["lotacao_atual"],
+                "departamento": vehicle["departamento"],
+                "data_inicio": datetime.now(timezone.utc).isoformat(),
+                "data_fim": None
+            })
+            logger.info(f"Veículo de teste criado: {vehicle['placa']}")
+        else:
+            # Veículo existe, apenas garantir que tem departamento
+            await db.vehicles.update_one(
+                {"placa": vehicle["placa"]},
+                {"$set": {"departamento": vehicle["departamento"]}}
+            )
+    
+    # 5. Criar arquivo de credenciais para testes
+    os.makedirs('/app/memory', exist_ok=True)
+    with open('/app/memory/test_credentials.md', 'w') as f:
+        f.write("# Credenciais de Teste - Frota de Veículos PMTF\n\n")
+        f.write("## Usuário Administrador\n")
+        f.write(f"- Email: {admin_email}\n")
+        f.write(f"- Senha: {admin_password}\n")
+        f.write(f"- Role: ADMIN\n\n")
+        f.write("## Usuário Padrão\n")
+        f.write(f"- Email: {test_user_email}\n")
+        f.write(f"- Senha: {test_user_password}\n")
+        f.write(f"- Role: PADRÃO\n\n")
+```
+
+**Comportamento:**
+1. **Índices:** Criados se não existirem (idempotente)
+2. **Admin:** Criado se não existe, senha atualizada se mudou
+3. **Usuário Padrão:** Criado se não existe
+4. **Veículos:** Criados se não existem (baseado em placa única)
+5. **Credenciais:** Arquivo sempre recriado
+
+**Idempotência:**
+- Pode rodar múltiplas vezes sem duplicar dados
+- Usa `find_one()` para checar existência antes de criar
+
+---
+
+### 7.11 Shutdown Event
+
+**Código:**
+```python
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
+```
+
+**Propósito:**
+- Fecha conexão MongoDB gracefully
+- Evita conexões pendentes
+
+---
+
+### 7.12 Tratamento de Erros
+
+**Estratégia Atual:**
+- **HTTPException:** Erros de negócio (401, 403, 404, 400)
+- **Pydantic ValidationError:** Automático (422)
+- **MongoDB Errors:** Não tratados (500)
+- **Unexpected Errors:** Não tratados (500)
+
+**Exemplo de Erro:**
+```python
+raise HTTPException(status_code=404, detail="Veículo não encontrado")
+```
+
+**Response:**
+```json
+{
+  "detail": "Veículo não encontrado"
+}
+```
+
+**Códigos HTTP Usados:**
+- **200:** Sucesso
+- **201:** Criado (não usado explicitamente, FastAPI retorna 200)
+- **400:** Bad Request (email duplicado, nenhum dado para atualizar)
+- **401:** Unauthorized (não autenticado, token inválido/expirado)
+- **403:** Forbidden (não é admin)
+- **404:** Not Found (usuário/veículo não encontrado)
+- **422:** Unprocessable Entity (validação Pydantic falhou)
+- **500:** Internal Server Error (erros não tratados)
+
+**Melhorias Recomendadas:**
+1. **Global Exception Handler:**
+```python
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail}
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"error": "Dados inválidos", "details": exc.errors()}
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.error(f"Unhandled error: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Erro interno do servidor"}
+    )
+```
+
+2. **Erros MongoDB:**
+```python
+from pymongo.errors import DuplicateKeyError
+
+try:
+    await db.users.insert_one(user_doc)
+except DuplicateKeyError:
+    raise HTTPException(status_code=400, detail="Email já cadastrado")
+```
+
+---
+
+## 8. BANCO DE DADOS E MODELO DE DADOS
+
+### 8.1 Sistema de Banco de Dados
+
+**MongoDB 7.0+**
+- NoSQL orientado a documentos
+- Schema-less (flexível)
+- Suporte a índices
+- Queries assíncronas via Motor
+
+**Connection String:**
+```
+mongodb://localhost:27017
+```
+
+**Database Name:**
+```
+test_database  (dev)
+pmtf_frota     (prod recomendado)
+```
+
+---
+
+### 8.2 Collections (Tabelas)
+
+**8.2.1 Collection: `users`**
+
+**Propósito:**
+- Armazenar usuários do sistema
+- Autenticação e autorização
+
+**Estrutura do Documento:**
+```javascript
+{
+  "_id": ObjectId("507f1f77bcf86cd799439011"),
+  "email": "admin@pmtf.gov.br",           // String, lowercase, unique
+  "password_hash": "$2b$12$...",           // String, bcrypt hash
+  "name": "Administrador PMTF",            // String
+  "role": "ADMIN",                         // String, enum: "ADMIN" | "PADRÃO"
+  "created_at": "2026-04-05T23:00:00.000000+00:00"  // ISO 8601 string
+}
+```
+
+**Campos:**
+
+| Campo | Tipo | Obrigatório | Validação | Default | Descrição |
+|-------|------|-------------|-----------|---------|-----------|
+| `_id` | ObjectId | Sim (auto) | - | Auto-gerado | ID único MongoDB |
+| `email` | String | Sim | EmailStr, unique | - | Email do usuário (lowercase) |
+| `password_hash` | String | Sim | - | - | Hash bcrypt da senha |
+| `name` | String | Sim | - | - | Nome completo |
+| `role` | String | Sim | "ADMIN" ou "PADRÃO" | "PADRÃO" | Perfil de acesso |
+| `created_at` | String | Sim | ISO 8601 | - | Data/hora de criação |
+
+**Índices:**
+```javascript
+db.users.createIndex({ "email": 1 }, { unique: true })
+```
+
+**Regras:**
+- Email único (índice garante)
+- Password nunca retornado em queries (projeção `{"password_hash": 0}`)
+- Role case-sensitive
+
+**Valores Permitidos - Role:**
+- `"ADMIN"`: Acesso completo
+- `"PADRÃO"`: Somente leitura
+
+---
+
+**8.2.2 Collection: `vehicles`**
+
+**Propósito:**
+- Armazenar veículos da frota municipal
+- Informações completas e status atual
+
+**Estrutura do Documento:**
+```javascript
+{
+  "_id": ObjectId("507f1f77bcf86cd799439011"),
+  "placa": "ABC-1234",                     // String, identificador principal
+  "marca": "Toyota",                       // String
+  "modelo": "Hilux",                       // String
+  "ano_fabricacao": 2020,                  // Integer
+  "chassi": "9BWZZZ377VT004251",          // String, identificador único
+  "status": "EM_ATIVIDADE",               // String, enum
+  "lotacao_atual": "Secretaria de Saúde", // String
+  "departamento": "Departamento de Vigilância Sanitária",  // String
+  "created_at": "2026-04-05T23:00:00.000000+00:00",       // ISO 8601
+  "updated_at": "2026-04-05T23:00:00.000000+00:00"        // ISO 8601
+}
+```
+
+**Campos:**
+
+| Campo | Tipo | Obrigatório | Validação | Default | Descrição |
+|-------|------|-------------|-----------|---------|-----------|
+| `_id` | ObjectId | Sim (auto) | - | Auto | ID único |
+| `placa` | String | Sim | - | - | Placa do veículo |
+| `marca` | String | Sim | - | - | Fabricante |
+| `modelo` | String | Sim | - | - | Modelo |
+| `ano_fabricacao` | Integer | Sim | - | - | Ano de fabricação |
+| `chassi` | String | Sim | - | - | Número do chassi |
+| `status` | String | Sim | Enum | "EM_ATIVIDADE" | Status atual |
+| `lotacao_atual` | String | Sim | - | - | Secretaria/órgão atual |
+| `departamento` | String | Sim | - | - | Departamento/setor |
+| `created_at` | String | Sim | ISO 8601 | - | Data de cadastro |
+| `updated_at` | String | Sim | ISO 8601 | - | Última atualização |
+
+**Índices:**
+```javascript
+db.vehicles.createIndex({ "placa": 1 })
+```
+
+**Valores Permitidos - Status:**
+- `"EM_ATIVIDADE"`: Veículo operacional
+- `"EM_MANUTENCAO"`: Veículo em manutenção
+- `"INATIVO"`: Veículo fora de operação
+
+**Regras de Negócio:**
+- Placa não tem índice único (permite duplicatas históricas - não ideal)
+- Status deve ser um dos 3 valores acima
+- `updated_at` atualizado automaticamente em edições
+- Lotação e departamento sempre em sincronia
+
+**Observação:**
+- **Falta:** Índice único em placa (recomendado)
+- **Falta:** Validação de formato de placa (AAA-1234)
+- **Falta:** Validação de ano (1900-2100)
+
+---
+
+**8.2.3 Collection: `location_history`**
+
+**Propósito:**
+- Rastrear histórico de lotações de veículos
+- Timeline completa de movimentações
+
+**Estrutura do Documento:**
+```javascript
+{
+  "_id": ObjectId("507f1f77bcf86cd799439012"),
+  "vehicle_id": "507f1f77bcf86cd799439011",  // String (ObjectId convertido)
+  "local": "Secretaria de Saúde",            // String
+  "departamento": "Departamento de Vigilância Sanitária",  // String
+  "data_inicio": "2026-04-05T23:00:00.000000+00:00",      // ISO 8601
+  "data_fim": null                           // ISO 8601 ou null
+}
+```
+
+**Campos:**
+
+| Campo | Tipo | Obrigatório | Validação | Default | Descrição |
+|-------|------|-------------|-----------|---------|-----------|
+| `_id` | ObjectId | Sim (auto) | - | Auto | ID único |
+| `vehicle_id` | String | Sim | - | - | ID do veículo (referência) |
+| `local` | String | Sim | - | - | Lotação/secretaria |
+| `departamento` | String | Sim | - | - | Departamento/setor |
+| `data_inicio` | String | Sim | ISO 8601 | - | Início da lotação |
+| `data_fim` | String ou Null | Não | ISO 8601 | null | Fim da lotação (null = atual) |
+
+**Índices:**
+```javascript
+db.location_history.createIndex({ "vehicle_id": 1 })
+```
+
+**Interpretação:**
+- `data_fim = null`: Lotação ATUAL (ativa)
+- `data_fim != null`: Lotação PASSADA (finalizada)
+
+**Query Exemplo:**
+```javascript
+// Buscar lotação atual de um veículo
+db.location_history.find({
+  "vehicle_id": "507f...",
+  "data_fim": null
+})
+
+// Buscar histórico completo ordenado
+db.location_history.find({
+  "vehicle_id": "507f..."
+}).sort({ "data_inicio": -1 })
+```
+
+**Regras de Negócio:**
+1. Cada veículo pode ter APENAS UMA lotação com `data_fim = null`
+2. Ao mudar lotação:
+   - Finaliza lotação anterior (define `data_fim`)
+   - Cria nova com `data_fim = null`
+3. Ao deletar veículo, deleta todo histórico
+
+**Observação:**
+- **Falta:** Foreign key constraint (MongoDB não suporta nativamente)
+- **Falta:** Validação `data_fim > data_inicio`
+- **Falta:** Garantia de apenas 1 lotação ativa por veículo (índice parcial)
+
+**Índice Parcial Recomendado:**
+```javascript
+db.location_history.createIndex(
+  { "vehicle_id": 1 },
+  { 
+    unique: true,
+    partialFilterExpression: { "data_fim": null }
+  }
+)
+```
+Isso garante que cada veículo tenha APENAS 1 lotação ativa.
+
+---
+
+### 8.3 Diagrama de Relacionamentos
+
+```
+┌─────────────────────┐
+│      users          │
+├─────────────────────┤
+│ _id (PK)            │
+│ email (UNIQUE)      │
+│ password_hash       │
+│ name                │
+│ role                │
+│ created_at          │
+└─────────────────────┘
+         │
+         │ (Nenhuma relação direta)
+         │
+┌─────────────────────┐          ┌──────────────────────────┐
+│     vehicles        │ 1      * │   location_history       │
+├─────────────────────┤──────────├──────────────────────────┤
+│ _id (PK)            │          │ _id (PK)                 │
+│ placa               │          │ vehicle_id (FK*)         │
+│ marca               │          │ local                    │
+│ modelo              │          │ departamento             │
+│ ano_fabricacao      │          │ data_inicio              │
+│ chassi              │          │ data_fim (nullable)      │
+│ status              │          └──────────────────────────┘
+│ lotacao_atual       │
+│ departamento        │
+│ created_at          │
+│ updated_at          │
+└─────────────────────┘
+
+* FK = Pseudo Foreign Key (não enforced)
+```
+
+**Relacionamentos:**
+- **users ↔ vehicles:** Nenhum relacionamento direto
+  - Usuários não "possuem" veículos
+  - Relacionamento apenas via autenticação (quem pode editar)
+  
+- **vehicles ↔ location_history:** 1 para N
+  - 1 veículo tem N entradas de histórico
+  - `vehicle_id` referencia `vehicles._id` (como string)
+  - Cascata de delete manual (não automática)
+
+**Integridade Referencial:**
+- MongoDB não suporta foreign keys nativamente
+- Implementado via lógica de aplicação:
+  ```python
+  # Ao deletar veículo
+  await db.location_history.delete_many({"vehicle_id": vehicle_id})
+  ```
+
+---
+
+### 8.4 Migrations e Seeds
+
+**Migrations:**
+- **Não existem** formalmente (MongoDB é schema-less)
+- Mudanças de schema via:
+  1. Atualização de código
+  2. Scripts de migração manuais (se necessário)
+
+**Seeds:**
+- Implementados em `startup_event()`
+- Executam automaticamente ao iniciar servidor
+- Idempotentes (seguros para re-executar)
+
+**Dados Seedados:**
+1. **Admin User:**
+   - Email: `admin@pmtf.gov.br`
+   - Senha: `admin123`
+   - Role: ADMIN
+
+2. **Usuário Padrão:**
+   - Email: `usuario@pmtf.gov.br`
+   - Senha: `usuario123`
+   - Role: PADRÃO
+
+3. **4 Veículos de Teste:**
+   - ABC-1234 (Chevrolet S10) - EM_ATIVIDADE
+   - DEF-5678 (Fiat Toro) - EM_MANUTENCAO
+   - GHI-9012 (Toyota Hilux) - EM_ATIVIDADE
+   - JKL-3456 (VW Amarok) - INATIVO
+
+4. **Histórico Inicial:**
+   - 1 entrada por veículo com `data_fim = null`
+
+**Script de Limpeza (se necessário):**
+```python
+# Para resetar banco em dev
+async def reset_database():
+    await db.users.delete_many({})
+    await db.vehicles.delete_many({})
+    await db.location_history.delete_many({})
+    # Re-executar startup_event() manualmente
+```
+
+---
+
+### 8.5 Queries Comuns
+
+**8.5.1 Listar usuários (sem senha):**
+```python
+users = await db.users.find({}, {"password_hash": 0}).to_list(1000)
+```
+
+**8.5.2 Buscar usuário por email:**
+```python
+user = await db.users.find_one({"email": "admin@pmtf.gov.br"})
+```
+
+**8.5.3 Buscar veículos por status:**
+```python
+vehicles = await db.vehicles.find({"status": "EM_ATIVIDADE"}).to_list(1000)
+```
+
+**8.5.4 Buscar veículo por placa (parcial, case-insensitive):**
+```python
+vehicles = await db.vehicles.find({
+    "placa": {"$regex": "ABC", "$options": "i"}
+}).to_list(1000)
+```
+
+**8.5.5 Atualizar status de veículo:**
+```python
+await db.vehicles.update_one(
+    {"_id": ObjectId(vehicle_id)},
+    {"$set": {"status": "EM_MANUTENCAO", "updated_at": datetime.now(timezone.utc).isoformat()}}
+)
+```
+
+**8.5.6 Finalizar lotações anteriores:**
+```python
+await db.location_history.update_many(
+    {"vehicle_id": vehicle_id, "data_fim": None},
+    {"$set": {"data_fim": datetime.now(timezone.utc).isoformat()}}
+)
+```
+
+**8.5.7 Buscar histórico de veículo ordenado:**
+```python
+history = await db.location_history.find(
+    {"vehicle_id": vehicle_id}
+).sort("data_inicio", -1).to_list(1000)
+```
+
+**8.5.8 Contar veículos por status:**
+```python
+count = await db.vehicles.count_documents({"status": "EM_ATIVIDADE"})
+```
+
+**8.5.9 Deletar veículo e histórico (cascata manual):**
+```python
+await db.vehicles.delete_one({"_id": ObjectId(vehicle_id)})
+await db.location_history.delete_many({"vehicle_id": vehicle_id})
+```
+
+---
+
+## 9. AUTENTICAÇÃO E AUTORIZAÇÃO
+
+### 9.1 Mecanismo de Autenticação
+
+**Tipo:** JWT (JSON Web Token) baseado em cookies
+
+**Fluxo Completo:**
+
+```
+1. LOGIN
+   ┌─────────┐                 ┌──────────┐                ┌──────────┐
+   │ Browser │                 │  Backend │                │ MongoDB  │
+   └────┬────┘                 └─────┬────┘                └─────┬────┘
+        │                            │                           │
+        │ POST /api/auth/login       │                           │
+        │ {email, password}          │                           │
+        ├───────────────────────────>│                           │
+        │                            │ find_one({email})         │
+        │                            ├──────────────────────────>│
+        │                            │<──────────────────────────┤
+        │                            │ user document             │
+        │                            │                           │
+        │                            │ verify_password()         │
+        │                            │ (bcrypt.checkpw)          │
+        │                            │                           │
+        │                            │ create_access_token()     │
+        │                            │ create_refresh_token()    │
+        │                            │                           │
+        │ Set-Cookie: access_token   │                           │
+        │ Set-Cookie: refresh_token  │                           │
+        │ {user_data}                │                           │
+        │<───────────────────────────┤                           │
+        │                            │                           │
+
+2. REQUISIÇÃO AUTENTICADA
+   ┌─────────┐                 ┌──────────┐                ┌──────────┐
+   │ Browser │                 │  Backend │                │ MongoDB  │
+   └────┬────┘                 └─────┬────┘                └─────┬────┘
+        │                            │                           │
+        │ GET /api/vehicles          │                           │
+        │ Cookie: access_token=...   │                           │
+        ├───────────────────────────>│                           │
+        │                            │ get_current_user()        │
+        │                            │ jwt.decode(token)         │
+        │                            │                           │
+        │                            │ find_one({_id})           │
+        │                            ├──────────────────────────>│
+        │                            │<──────────────────────────┤
+        │                            │ user document             │
+        │                            │                           │
+        │                            │ find(vehicles)            │
+        │                            ├──────────────────────────>│
+        │                            │<──────────────────────────┤
+        │                            │ vehicles list             │
+        │                            │                           │
+        │ 200 OK                     │                           │
+        │ [vehicles]                 │                           │
+        │<───────────────────────────┤                           │
+
+3. LOGOUT
+   ┌─────────┐                 ┌──────────┐
+   │ Browser │                 │  Backend │
+   └────┬────┘                 └─────┬────┘
+        │                            │
+        │ POST /api/auth/logout      │
+        ├───────────────────────────>│
+        │                            │ delete_cookie()
+        │                            │ delete_cookie()
+        │                            │
+        │ Set-Cookie: (deleted)      │
+        │ 200 OK                     │
+        │<───────────────────────────┤
+```
+
+---
+
+### 9.2 Estrutura do JWT
+
+**Access Token Payload:**
+```json
+{
+  "sub": "507f1f77bcf86cd799439011",  // user_id
+  "email": "admin@pmtf.gov.br",
+  "exp": 1743894900,                   // Unix timestamp (15min future)
+  "type": "access"
+}
+```
+
+**Refresh Token Payload:**
+```json
+{
+  "sub": "507f1f77bcf86cd799439011",
+  "exp": 1744499700,                   // Unix timestamp (7 days future)
+  "type": "refresh"
+}
+```
+
+**Algoritmo:** HS256 (HMAC SHA-256)
+**Chave:** Definida em `JWT_SECRET` (.env)
+
+---
+
+### 9.3 Armazenamento de Token
+
+**Cookies httpOnly:**
+```python
+response.set_cookie(
+    key="access_token",
+    value=access_token,
+    httponly=True,      # Não acessível via JavaScript
+    secure=False,       # True em produção (HTTPS only)
+    samesite="lax",     # Proteção CSRF
+    max_age=900,        # 15 minutos em segundos
+    path="/"            # Disponível em todas as rotas
+)
+```
+
+**Atributos:**
+- **httpOnly:** JavaScript não pode ler (proteção XSS)
+- **secure:** Apenas HTTPS (deve ser True em produção)
+- **samesite:** `lax` ou `strict` (proteção CSRF)
+- **max_age:** Tempo de vida em segundos
+- **path:** Rotas onde cookie é enviado
+
+**Comparação com localStorage:**
+
+| Aspecto | Cookie httpOnly | localStorage |
+|---------|----------------|--------------|
+| Segurança XSS | ✅ Protegido | ❌ Vulnerável |
+| Segurança CSRF | ⚠️ Necessita SameSite | ✅ Não afetado |
+| Envio Automático | ✅ Sim | ❌ Não (manual) |
+| Tamanho Limite | ~4KB | ~5-10MB |
+| Acesso JS | ❌ Não | ✅ Sim |
+| Melhor para | Autenticação | Dados públicos |
+
+**Decisão do Projeto:**
+- Cookies httpOnly escolhidos por segurança
+- Trade-off: vulnerável a CSRF (mitigado com SameSite)
+
+---
+
+### 9.4 Verificação de Autenticação
+
+**get_current_user() - Dependency Injection:**
+
+```python
+async def get_current_user(request: Request) -> dict:
+    # 1. Extrair token
+    token = request.cookies.get("access_token")
+    if not token:
+        # Fallback para Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    
+    # 2. Decodificar e validar JWT
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Tipo de token inválido")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    
+    # 3. Buscar usuário no banco
+    user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuário não encontrado")
+    
+    # 4. Preparar resposta (sem senha)
+    user["_id"] = str(user["_id"])
+    user.pop("password_hash", None)
+    return user
+```
+
+**Uso em Rotas:**
+```python
+@api_router.get("/vehicles")
+async def get_vehicles(current_user: dict = Depends(get_current_user)):
+    # current_user já está autenticado e validado
+    vehicles = await db.vehicles.find({}).to_list(1000)
+    return vehicles
+```
+
+---
+
+### 9.5 Autorização por Role
+
+**require_admin() - Dependency Injection:**
+
+```python
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    return current_user
+```
+
+**Uso:**
+```python
+@api_router.post("/vehicles")
+async def create_vehicle(vehicle_data: VehicleCreate, current_user: dict = Depends(require_admin)):
+    # Só ADMIN chega aqui
+    # ...
+```
+
+**Fluxo:**
+1. `require_admin` chama `get_current_user` (via Depends)
+2. Se usuário não autenticado → 401 (antes de checar role)
+3. Se autenticado mas role != "ADMIN" → 403
+4. Se ADMIN → continua para função da rota
+
+---
+
+### 9.6 Matriz de Permissões
+
+| Endpoint | Anônimo | PADRÃO | ADMIN |
+|----------|---------|--------|-------|
+| POST /api/auth/register | ✅ | ✅ | ✅ |
+| POST /api/auth/login | ✅ | ✅ | ✅ |
+| POST /api/auth/logout | ❌ | ✅ | ✅ |
+| GET /api/auth/me | ❌ | ✅ | ✅ |
+| GET /api/users | ❌ | ❌ | ✅ |
+| POST /api/users | ❌ | ❌ | ✅ |
+| DELETE /api/users/{id} | ❌ | ❌ | ✅ |
+| GET /api/vehicles | ❌ | ✅ | ✅ |
+| GET /api/vehicles/em-* | ❌ | ✅ | ✅ |
+| POST /api/vehicles | ❌ | ❌ | ✅ |
+| PUT /api/vehicles/{id} | ❌ | ❌ | ✅ |
+| DELETE /api/vehicles/{id} | ❌ | ❌ | ✅ |
+| GET /api/vehicles/{id}/historico | ❌ | ✅ | ✅ |
+
+**Legendas:**
+- ✅ Permitido
+- ❌ Negado (401 ou 403)
+
+---
+
+### 9.7 Refresh Token (Não Implementado)
+
+**Função Existe Mas Endpoint Não:**
+```python
+def create_refresh_token(user_id: str) -> str:
+    # Função existe e token é criado
+    ...
+
+# MAS: Endpoint /api/auth/refresh NÃO EXISTE
+```
+
+**Implementação Recomendada:**
+```python
+@api_router.post("/auth/refresh")
+async def refresh_access_token(request: Request, response: Response):
+    # 1. Ler refresh_token do cookie
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token não encontrado")
+    
+    # 2. Validar refresh token
+    try:
+        payload = jwt.decode(refresh_token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Token inválido")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    
+    # 3. Buscar usuário
+    user_id = payload["sub"]
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuário não encontrado")
+    
+    # 4. Criar novo access token
+    new_access_token = create_access_token(user_id, user["email"])
+    
+    # 5. Definir cookie
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=900,
+        path="/"
+    )
+    
+    return {"message": "Token renovado com sucesso"}
+```
+
+**Frontend (uso recomendado):**
+```javascript
+// Interceptor Axios para auto-refresh
+axios.interceptors.response.use(
+  response => response,
+  async error => {
+    if (error.response?.status === 401) {
+      // Tentar refresh
+      try {
+        await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        // Retry request original
+        return axios(error.config);
+      } catch (refreshError) {
+        // Refresh falhou, redirecionar para login
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+---
+
+### 9.8 Reproduzir Fora do Emergent
+
+**Requisitos:**
+1. FastAPI com dependências (PyJWT, bcrypt)
+2. MongoDB rodando
+3. Variáveis de ambiente configuradas
+4. Frontend com axios e withCredentials
+
+**Código Portável:**
+- Todo código de auth já está portável
+- Não há dependências específicas do Emergent
+
+**Checklist de Migração:**
+1. ✅ Copiar funções de auth (hash_password, create_token, etc.)
+2. ✅ Copiar dependencies (get_current_user, require_admin)
+3. ✅ Copiar rotas de auth
+4. ✅ Configurar CORS com allow_credentials=True
+5. ✅ Configurar JWT_SECRET forte
+6. ✅ Habilitar HTTPS em produção (secure=True em cookies)
+7. ✅ Implementar rate limiting (opcional mas recomendado)
+8. ✅ Implementar endpoint de refresh (recomendado)
+
+**Melhorias de Segurança:**
+1. **Rate Limiting:**
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@api_router.post("/auth/login")
+@limiter.limit("5/minute")  # Máximo 5 tentativas por minuto
+async def login(...):
+    ...
+```
+
+2. **Brute Force Protection:**
+```python
+# Armazenar tentativas em Redis/MongoDB
+login_attempts = {}  # {email: count}
+
+if email in login_attempts and login_attempts[email] > 5:
+    raise HTTPException(status_code=429, detail="Muitas tentativas. Tente novamente em 15 minutos.")
+```
+
+3. **Token Blacklist (para logout imediato):**
+```python
+# Collection: token_blacklist
+await db.token_blacklist.insert_one({
+    "token": access_token,
+    "exp": datetime.now(timezone.utc) + timedelta(minutes=15)
+})
+
+# Verificar em get_current_user
+blacklisted = await db.token_blacklist.find_one({"token": token})
+if blacklisted:
+    raise HTTPException(status_code=401, detail="Token revogado")
+```
+
+---
+
+Devido ao limite de resposta, vou continuar com as seções 10-21 em outra mensagem. Deseja que eu continue?
