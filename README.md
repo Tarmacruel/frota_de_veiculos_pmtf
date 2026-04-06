@@ -6543,12 +6543,1620 @@ img.onerror = () => {
    └─> Redirect para /login
 ```
 
-**Importante:**
-- Token JWT ainda válido até expirar (15min)
-- Mas frontend não tem mais acesso (cookie deletado)
-- Se usuário copiou token antes, ainda pode usar até expirar
-- **Melhoria:** Implementar blacklist de tokens
+Continuando a documentação técnica completa:
 
 ---
 
-Vou continuar com as seções restantes (13-21) na próxima mensagem. Deseja que eu continue?
+## 13. ESTADO DA APLICAÇÃO
+
+### 13.1 Gerenciamento de Estado - Visão Geral
+
+**Arquitetura de Estado:**
+```
+┌─────────────────────────────────────────────────────┐
+│ ESTADO GLOBAL (React Context API)                   │
+├─────────────────────────────────────────────────────┤
+│ AuthContext:                                         │
+│ - user: null | false | UserObject                   │
+│ - loading: boolean                                   │
+│ - login(), logout(), register(), checkAuth()        │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ ESTADO LOCAL (useState em cada componente)          │
+├─────────────────────────────────────────────────────┤
+│ Login:                                               │
+│ - email, password, error, loading                   │
+│                                                      │
+│ CadastrarVeiculo:                                    │
+│ - formData, loading                                  │
+│                                                      │
+│ VehicleList:                                         │
+│ - vehicles, loading, editingVehicle,                │
+│   editDialogOpen, historyDialogOpen,                │
+│   selectedVehicleHistory, selectedVehicle,          │
+│   searchPlaca, searchMarca                          │
+│                                                      │
+│ Usuarios:                                            │
+│ - users, loading, dialogOpen, formData              │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ ESTADO DERIVADO (computed values)                   │
+├─────────────────────────────────────────────────────┤
+│ - isAdmin = user?.role === "ADMIN"                  │
+│ - filteredMenuItems = menuItems.filter(...)         │
+│ - tableData = vehicles.map(...)                     │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ ESTADO NA URL (React Router)                        │
+├─────────────────────────────────────────────────────┤
+│ - Rota atual: /dashboard/veiculos-atividade         │
+│ - Path params: vehicle_id em edição                 │
+│ - Query params: NÃO USADO (deveria usar para filtros)│
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ ESTADO NO SERVIDOR (Backend)                        │
+├─────────────────────────────────────────────────────┤
+│ - MongoDB (fonte da verdade)                        │
+│ - Cookies httpOnly (tokens JWT)                     │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+### 13.2 Estado Global - AuthContext
+
+**Localização:** Estado centralizado para autenticação
+
+**Provider:**
+```javascript
+<AuthProvider>
+  <BrowserRouter>
+    <Routes>...</Routes>
+  </BrowserRouter>
+</AuthProvider>
+```
+
+**Estado Gerenciado:**
+```javascript
+const [user, setUser] = useState(null);     // null = checking, false = logged out, object = logged in
+const [loading, setLoading] = useState(true); // true = checking auth
+```
+
+**Ciclo de Vida do Estado `user`:**
+```
+1. INITIAL STATE (app carrega)
+   user = null, loading = true
+   └─> ProtectedRoute mostra spinner
+
+2. CHECKING AUTH (useEffect executa)
+   checkAuth() chamado
+   └─> GET /api/auth/me
+   
+3a. SE AUTENTICADO
+    user = {id, email, name, role}, loading = false
+    └─> ProtectedRoute renderiza conteúdo
+    
+3b. SE NÃO AUTENTICADO
+    user = false, loading = false
+    └─> ProtectedRoute redireciona /login
+
+4. APÓS LOGIN
+   login() chamado
+   └─> POST /api/auth/login
+   └─> user = response.data, loading = false
+   
+5. APÓS LOGOUT
+   logout() chamado
+   └─> POST /api/auth/logout
+   └─> user = false
+```
+
+**Métodos Expostos:**
+```javascript
+{
+  user,        // Estado
+  loading,     // Estado
+  login,       // async (email, password) => Promise<UserData>
+  register,    // async (email, password, name, role) => Promise<UserData>
+  logout,      // async () => Promise<void>
+  checkAuth    // async () => Promise<void>
+}
+```
+
+**Consumo:**
+```javascript
+const { user, loading, login, logout } = useAuth();
+
+// Verificar se admin
+const isAdmin = user?.role === 'ADMIN';
+
+// Exibir nome
+{user && <p>Olá, {user.name}</p>}
+```
+
+---
+
+### 13.3 Estado Local - Componentes
+
+**13.3.1 Login.js**
+```javascript
+const [email, setEmail] = useState('');
+const [password, setPassword] = useState('');
+const [error, setError] = useState('');
+const [loading, setLoading] = useState(false);
+```
+- **Sincronizado com:** Inputs do formulário
+- **Resetado quando:** Nunca (componente desmonta após login)
+- **Persistido:** Não
+
+---
+
+**13.3.2 CadastrarVeiculo.js**
+```javascript
+const [loading, setLoading] = useState(false);
+const [formData, setFormData] = useState({
+  placa: '', marca: '', modelo: '', ano_fabricacao: '',
+  chassi: '', status: 'EM_ATIVIDADE', lotacao_atual: '', departamento: ''
+});
+```
+- **Sincronizado com:** Inputs do formulário
+- **Resetado quando:** Nunca (usuário redirecionado após sucesso)
+- **Validado:** HTML5 validation (required, type="number")
+- **Persistido:** Não (dados perdidos ao sair da página)
+
+**Melhoria Recomendada:**
+```javascript
+// Salvar draft no localStorage
+useEffect(() => {
+  localStorage.setItem('vehicleDraft', JSON.stringify(formData));
+}, [formData]);
+
+// Restaurar ao montar
+useEffect(() => {
+  const draft = localStorage.getItem('vehicleDraft');
+  if (draft) {
+    setFormData(JSON.parse(draft));
+  }
+}, []);
+```
+
+---
+
+**13.3.3 VehicleList.js (Componente Mais Complexo)**
+
+**Estados:**
+```javascript
+const [vehicles, setVehicles] = useState([]);                    // Lista de veículos
+const [loading, setLoading] = useState(true);                    // Loading inicial
+const [editingVehicle, setEditingVehicle] = useState(null);     // Veículo sendo editado
+const [editDialogOpen, setEditDialogOpen] = useState(false);    // Modal edição aberto?
+const [historyDialogOpen, setHistoryDialogOpen] = useState(false); // Modal histórico aberto?
+const [selectedVehicleHistory, setSelectedVehicleHistory] = useState([]); // Histórico do veículo
+const [selectedVehicle, setSelectedVehicle] = useState(null);   // Veículo do histórico
+const [searchPlaca, setSearchPlaca] = useState('');             // Filtro placa
+const [searchMarca, setSearchMarca] = useState('');             // Filtro marca
+```
+
+**Dependências entre Estados:**
+```
+searchPlaca/searchMarca (user input)
+          ↓
+    useEffect dispara
+          ↓
+    fetchVehicles()
+          ↓
+    setVehicles(data)
+          ↓
+    Tabela re-renderiza
+```
+
+**Estado Derivado:**
+```javascript
+const printRef = useRef(); // Não é estado, mas ref para impressão
+const isAdmin = user?.role === 'ADMIN'; // Derivado de AuthContext
+```
+
+**Fluxo de Edição:**
+```
+1. handleEdit(vehicle)
+   └─> setEditingVehicle({...vehicle})  // Cópia
+   └─> setEditDialogOpen(true)
+
+2. Usuário edita campos
+   └─> setEditingVehicle({...editingVehicle, [campo]: valor})
+
+3. handleUpdateVehicle()
+   └─> PUT /api/vehicles
+   └─> setEditDialogOpen(false)
+   └─> fetchVehicles() // Re-busca lista
+```
+
+**Invalidação de Cache:**
+- Após criar: redirect para listagem (auto-fetch)
+- Após editar: `fetchVehicles()` chamado manualmente
+- Após deletar: `fetchVehicles()` chamado manualmente
+- **Estratégia:** Re-fetch completo (sem optimistic update)
+
+---
+
+### 13.4 Estado na URL
+
+**Atual:** Apenas rota, sem query params ou state
+
+**Rotas:**
+- `/login`
+- `/dashboard`
+- `/dashboard/cadastrar-veiculo`
+- `/dashboard/veiculos-atividade`
+- `/dashboard/veiculos-manutencao`
+- `/dashboard/veiculos-inativos`
+- `/dashboard/usuarios`
+
+**Não Usado:**
+- Query params para filtros (deveria usar)
+- Path params para edição (usa modal)
+- State no navigate (React Router location.state)
+
+**Melhoria Recomendada:**
+```javascript
+// Filtros na URL
+const [searchParams, setSearchParams] = useSearchParams();
+
+// Ler filtros da URL
+const placa = searchParams.get('placa') || '';
+const marca = searchParams.get('marca') || '';
+
+// Atualizar URL quando filtros mudam
+useEffect(() => {
+  const params = {};
+  if (placa) params.placa = placa;
+  if (marca) params.marca = marca;
+  setSearchParams(params);
+}, [placa, marca]);
+
+// Benefício: URLs compartilháveis
+// https://frota.pmtf.gov.br/dashboard/veiculos-atividade?placa=ABC
+```
+
+---
+
+### 13.5 Sincronização com Backend
+
+**Estratégia:** Fetch on Demand + Manual Re-fetch
+
+**Não Há:**
+- Polling (re-buscar a cada X segundos)
+- WebSockets (updates em tempo real)
+- Server-Sent Events
+- Cache local (Service Worker, IndexedDB)
+- Optimistic updates
+
+**Há:**
+- Fetch ao montar componente (`useEffect`)
+- Re-fetch após mutações (create, update, delete)
+- Re-fetch ao mudar filtros
+
+**Exemplo de Re-fetch Manual:**
+```javascript
+// Após deletar
+const handleDelete = async (vehicleId) => {
+  await axios.delete(`/api/vehicles/${vehicleId}`);
+  fetchVehicles(); // Re-busca lista completa
+};
+```
+
+**Problema:**
+- Se outro usuário criar/editar veículo, não atualiza automaticamente
+- Usuário precisa dar refresh manual na página
+
+**Solução Recomendada:**
+```javascript
+// Polling simples (a cada 30s)
+useEffect(() => {
+  const interval = setInterval(() => {
+    fetchVehicles();
+  }, 30000);
+  return () => clearInterval(interval);
+}, []);
+
+// Ou WebSocket para updates em tempo real
+```
+
+---
+
+### 13.6 Persistência
+
+**Persistido no Backend (MongoDB):**
+- users
+- vehicles
+- location_history
+
+**Persistido no Browser (Cookies):**
+- access_token (15min)
+- refresh_token (7 dias)
+
+**Não Persistido (perdido ao reload):**
+- Estado de formulários
+- Filtros de busca
+- Estado de modais (aberto/fechado)
+- Posição de scroll
+
+**Persistência Recomendada:**
+```javascript
+// sessionStorage para filtros (perdido ao fechar tab)
+useEffect(() => {
+  sessionStorage.setItem('vehicleFilters', JSON.stringify({placa, marca}));
+}, [placa, marca]);
+
+// Restaurar ao montar
+useEffect(() => {
+  const saved = sessionStorage.getItem('vehicleFilters');
+  if (saved) {
+    const {placa, marca} = JSON.parse(saved);
+    setSearchPlaca(placa || '');
+    setSearchMarca(marca || '');
+  }
+}, []);
+```
+
+---
+
+### 13.7 Migração de Estado para Fora do Emergent
+
+**Totalmente Portável:**
+- AuthContext usa apenas React nativo
+- useState/useEffect padrão
+- Axios configurável (apenas URL muda)
+
+**Passos de Migração:**
+1. ✅ Copiar `src/contexts/AuthContext.js`
+2. ✅ Atualizar `REACT_APP_BACKEND_URL` no .env
+3. ✅ Manter estrutura de components
+4. ✅ Nenhuma mudança de código necessária
+
+**Opcional - Migrar para Biblioteca de Estado:**
+
+**Zustand (recomendado para simplicidade):**
+```javascript
+// store/authStore.js
+import create from 'zustand';
+
+export const useAuthStore = create((set) => ({
+  user: null,
+  loading: true,
+  login: async (email, password) => {
+    const { data } = await axios.post('/api/auth/login', {email, password});
+    set({ user: data });
+  },
+  logout: async () => {
+    await axios.post('/api/auth/logout');
+    set({ user: false });
+  },
+  checkAuth: async () => {
+    try {
+      const { data } = await axios.get('/api/auth/me');
+      set({ user: data, loading: false });
+    } catch {
+      set({ user: false, loading: false });
+    }
+  }
+}));
+
+// Uso
+const { user, login, logout } = useAuthStore();
+```
+
+**React Query (recomendado para cache):**
+```javascript
+// hooks/useAuth.js
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+export const useAuth = () => {
+  const queryClient = useQueryClient();
+  
+  const { data: user, isLoading } = useQuery({
+    queryKey: ['auth'],
+    queryFn: async () => {
+      const { data } = await axios.get('/api/auth/me');
+      return data;
+    },
+    retry: false
+  });
+  
+  const loginMutation = useMutation({
+    mutationFn: async ({email, password}) => {
+      const { data } = await axios.post('/api/auth/login', {email, password});
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(['auth'], data);
+    }
+  });
+  
+  return { user, isLoading, login: loginMutation.mutate };
+};
+```
+
+---
+
+## 14. CONTRATOS DE DADOS
+
+### 14.1 Tipos/Interfaces - Backend (Pydantic Models)
+
+**14.1.1 User Models**
+
+**UserRegister (Input):**
+```python
+{
+  "email": "user@example.com",      # EmailStr - validado
+  "password": "senha123",            # str - min length não validado
+  "name": "Nome Completo",           # str
+  "role": "PADRÃO"                   # str - default "PADRÃO"
+}
+```
+
+**UserLogin (Input):**
+```python
+{
+  "email": "user@example.com",      # EmailStr
+  "password": "senha123"             # str
+}
+```
+
+**UserResponse (Output):**
+```python
+{
+  "id": "507f1f77bcf86cd799439011", # str (ObjectId convertido)
+  "email": "user@example.com",       # str
+  "name": "Nome Completo",           # str
+  "role": "ADMIN",                   # str - "ADMIN" | "PADRÃO"
+  "created_at": "2026-04-05T23:00:00.000000+00:00"  # str ISO 8601
+}
+```
+
+---
+
+**14.1.2 Vehicle Models**
+
+**VehicleCreate (Input):**
+```python
+{
+  "placa": "ABC-1234",               # str
+  "marca": "Toyota",                 # str
+  "modelo": "Hilux",                 # str
+  "ano_fabricacao": 2020,            # int
+  "chassi": "9BWZZZ377VT004251",    # str
+  "status": "EM_ATIVIDADE",          # str - default "EM_ATIVIDADE"
+  "lotacao_atual": "Secretaria de Saúde",  # str
+  "departamento": "Departamento de Vigilância"  # str
+}
+```
+
+**VehicleUpdate (Input):**
+```python
+{
+  "placa": "ABC-1234",               # Optional[str]
+  "marca": "Toyota",                 # Optional[str]
+  "modelo": "Hilux",                 # Optional[str]
+  "ano_fabricacao": 2020,            # Optional[int]
+  "chassi": "9BWZZZ377VT004251",    # Optional[str]
+  "status": "EM_MANUTENCAO",         # Optional[str]
+  "lotacao_atual": "Oficina",        # Optional[str]
+  "departamento": "Manutenção"       # Optional[str]
+}
+# Todos campos opcionais - permite atualização parcial
+```
+
+**VehicleResponse (Output):**
+```python
+{
+  "id": "507f1f77bcf86cd799439011",
+  "placa": "ABC-1234",
+  "marca": "Toyota",
+  "modelo": "Hilux",
+  "ano_fabricacao": 2020,
+  "chassi": "9BWZZZ377VT004251",
+  "status": "EM_ATIVIDADE",
+  "lotacao_atual": "Secretaria de Saúde",
+  "departamento": "Departamento de Vigilância",
+  "created_at": "2026-04-05T23:00:00.000000+00:00",
+  "updated_at": "2026-04-05T23:00:00.000000+00:00"
+}
+```
+
+---
+
+**14.1.3 Location History Models**
+
+**LocationHistoryResponse (Output):**
+```python
+{
+  "id": "507f1f77bcf86cd799439012",
+  "vehicle_id": "507f1f77bcf86cd799439011",
+  "local": "Secretaria de Saúde",
+  "departamento": "Departamento de Vigilância",
+  "data_inicio": "2026-04-05T23:00:00.000000+00:00",
+  "data_fim": null  # null = lotação atual, string = lotação passada
+}
+```
+
+---
+
+### 14.2 Enums e Constantes
+
+**Status de Veículo (não enforçado, apenas convenção):**
+```python
+VEHICLE_STATUS = {
+  "EM_ATIVIDADE": "Em Atividade",
+  "EM_MANUTENCAO": "Em Manutenção",
+  "INATIVO": "Inativo"
+}
+```
+
+**Roles de Usuário (não enforçado):**
+```python
+USER_ROLES = {
+  "ADMIN": "Administrador",
+  "PADRÃO": "Usuário Padrão"
+}
+```
+
+**Melhoria Recomendada (usar Enum):**
+```python
+from enum import Enum
+
+class VehicleStatus(str, Enum):
+    EM_ATIVIDADE = "EM_ATIVIDADE"
+    EM_MANUTENCAO = "EM_MANUTENCAO"
+    INATIVO = "INATIVO"
+
+class UserRole(str, Enum):
+    ADMIN = "ADMIN"
+    PADRAO = "PADRÃO"
+
+# Uso em Pydantic
+class VehicleCreate(BaseModel):
+    status: VehicleStatus = VehicleStatus.EM_ATIVIDADE
+    # Valida automaticamente, só aceita valores do enum
+```
+
+---
+
+### 14.3 Exemplos Reais de Request/Response
+
+**14.3.1 Login - POST /api/auth/login**
+
+**Request:**
+```http
+POST /api/auth/login HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Content-Type: application/json
+
+{
+  "email": "admin@pmtf.gov.br",
+  "password": "admin123"
+}
+```
+
+**Response (Success - 200):**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Set-Cookie: access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Path=/; SameSite=lax; Max-Age=900
+Set-Cookie: refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Path=/; SameSite=lax; Max-Age=604800
+
+{
+  "id": "507f1f77bcf86cd799439011",
+  "email": "admin@pmtf.gov.br",
+  "name": "Administrador PMTF",
+  "role": "ADMIN",
+  "created_at": "2026-04-05T20:00:00.000000+00:00"
+}
+```
+
+**Response (Error - 401):**
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{
+  "detail": "Email ou senha incorretos"
+}
+```
+
+**Response (Error - 422):**
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "email"],
+      "msg": "Field required",
+      "input": {"password": "senha123"}
+    }
+  ]
+}
+```
+
+---
+
+**14.3.2 Criar Veículo - POST /api/vehicles**
+
+**Request:**
+```http
+POST /api/vehicles HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Content-Type: application/json
+Cookie: access_token=eyJ...
+
+{
+  "placa": "MNO-7890",
+  "marca": "Ford",
+  "modelo": "Ranger",
+  "ano_fabricacao": 2022,
+  "chassi": "9BWZZZ377VT004255",
+  "status": "EM_ATIVIDADE",
+  "lotacao_atual": "Secretaria de Educação",
+  "departamento": "Departamento de Transporte Escolar"
+}
+```
+
+**Response (Success - 200):**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "id": "507f1f77bcf86cd799439015",
+  "placa": "MNO-7890",
+  "marca": "Ford",
+  "modelo": "Ranger",
+  "ano_fabricacao": 2022,
+  "chassi": "9BWZZZ377VT004255",
+  "status": "EM_ATIVIDADE",
+  "lotacao_atual": "Secretaria de Educação",
+  "departamento": "Departamento de Transporte Escolar",
+  "created_at": "2026-04-05T23:35:15.123456+00:00",
+  "updated_at": "2026-04-05T23:35:15.123456+00:00"
+}
+```
+
+**Response (Error - 403 Forbidden - não é admin):**
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{
+  "detail": "Acesso negado. Apenas administradores."
+}
+```
+
+---
+
+**14.3.3 Listar Veículos com Filtros - GET /api/vehicles/em-atividade**
+
+**Request:**
+```http
+GET /api/vehicles/em-atividade?placa=ABC&marca=ford HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Cookie: access_token=eyJ...
+```
+
+**Response (Success - 200):**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[
+  {
+    "id": "507f1f77bcf86cd799439011",
+    "placa": "ABC-1234",
+    "marca": "Ford",
+    "modelo": "Ranger",
+    "ano_fabricacao": 2020,
+    "chassi": "9BWZZZ377VT004251",
+    "status": "EM_ATIVIDADE",
+    "lotacao_atual": "Secretaria de Saúde",
+    "departamento": "Departamento de Vigilância Sanitária",
+    "created_at": "2026-04-05T23:00:00.000000+00:00",
+    "updated_at": "2026-04-05T23:00:00.000000+00:00"
+  }
+]
+```
+
+**Response (Empty - 200):**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[]
+```
+
+---
+
+**14.3.4 Histórico de Veículo - GET /api/vehicles/{id}/historico**
+
+**Request:**
+```http
+GET /api/vehicles/507f1f77bcf86cd799439011/historico HTTP/1.1
+Host: frota-veiculos.preview.emergentagent.com
+Cookie: access_token=eyJ...
+```
+
+**Response (Success - 200):**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[
+  {
+    "id": "507f1f77bcf86cd799439013",
+    "vehicle_id": "507f1f77bcf86cd799439011",
+    "local": "Secretaria de Saúde",
+    "departamento": "Departamento de Vigilância Sanitária",
+    "data_inicio": "2026-04-05T23:00:00.000000+00:00",
+    "data_fim": null
+  },
+  {
+    "id": "507f1f77bcf86cd799439012",
+    "vehicle_id": "507f1f77bcf86cd799439011",
+    "local": "Secretaria de Obras",
+    "departamento": "Departamento de Infraestrutura",
+    "data_inicio": "2026-01-15T10:00:00.000000+00:00",
+    "data_fim": "2026-04-05T23:00:00.000000+00:00"
+  }
+]
+```
+
+---
+
+### 14.4 Convenções de Nomenclatura
+
+**Backend (Python):**
+- **snake_case:** Variáveis, funções, campos (`user_id`, `created_at`)
+- **PascalCase:** Classes, Modelos Pydantic (`UserRegister`, `VehicleCreate`)
+- **UPPER_CASE:** Constantes (`JWT_SECRET`, `JWT_ALGORITHM`)
+
+**Frontend (JavaScript):**
+- **camelCase:** Variáveis, funções, props (`formData`, `handleSubmit`)
+- **PascalCase:** Componentes React (`Login`, `VehicleList`)
+- **UPPER_SNAKE_CASE:** Constantes (`BACKEND_URL`)
+
+**MongoDB:**
+- **snake_case:** Campos de documento (`password_hash`, `data_inicio`)
+- **_id:** Sempre `_id` (convenção MongoDB)
+
+**HTTP:**
+- **kebab-case:** URLs (`/veiculos-atividade`)
+- **snake_case:** Query params (`?placa=ABC&marca=ford`)
+- **snake_case:** JSON keys no response (backend Python)
+
+---
+
+### 14.5 TypeScript Definitions (Recomendado para Migração)
+
+**Arquivo:** `src/types/index.ts`
+
+```typescript
+// User Types
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: 'ADMIN' | 'PADRÃO';
+  created_at: string;
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface RegisterData extends LoginCredentials {
+  name: string;
+  role?: 'ADMIN' | 'PADRÃO';
+}
+
+// Vehicle Types
+export type VehicleStatus = 'EM_ATIVIDADE' | 'EM_MANUTENCAO' | 'INATIVO';
+
+export interface Vehicle {
+  id: string;
+  placa: string;
+  marca: string;
+  modelo: string;
+  ano_fabricacao: number;
+  chassi: string;
+  status: VehicleStatus;
+  lotacao_atual: string;
+  departamento: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VehicleCreate {
+  placa: string;
+  marca: string;
+  modelo: string;
+  ano_fabricacao: number;
+  chassi: string;
+  status?: VehicleStatus;
+  lotacao_atual: string;
+  departamento: string;
+}
+
+export interface VehicleUpdate extends Partial<VehicleCreate> {}
+
+// Location History Types
+export interface LocationHistory {
+  id: string;
+  vehicle_id: string;
+  local: string;
+  departamento: string;
+  data_inicio: string;
+  data_fim: string | null;
+}
+
+// Auth Context Types
+export interface AuthContextType {
+  user: User | false | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<User>;
+  register: (email: string, password: string, name: string, role?: string) => Promise<User>;
+  logout: () => Promise<void>;
+  checkAuth: () => Promise<void>;
+}
+
+// API Response Types
+export interface ApiError {
+  detail: string | object[];
+}
+```
+
+**Uso:**
+```typescript
+import { User, Vehicle, AuthContextType } from './types';
+
+const [user, setUser] = useState<User | false | null>(null);
+const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+```
+
+---
+
+## 15. VALIDAÇÕES E TRATAMENTO DE ERRO
+
+### 15.1 Validações de Formulário (Frontend)
+
+**Estratégia Atual:** HTML5 validation nativa
+
+**Validações Implementadas:**
+
+**Login:**
+```javascript
+<Input
+  type="email"    // Valida formato de email
+  required        // Campo obrigatório
+/>
+<Input
+  type="password" // Mascara input
+  required        // Campo obrigatório
+/>
+```
+
+**Cadastro de Veículo:**
+```javascript
+<Input name="placa" required />
+<Input name="marca" required />
+<Input name="modelo" required />
+<Input name="ano_fabricacao" type="number" required />
+<Input name="chassi" required />
+<Input name="lotacao_atual" required />
+<Input name="departamento" required />
+```
+
+**Limitações:**
+- Sem validação de formato de placa (deveria ser AAA-1234)
+- Sem validação de range de ano (aceita 0, 9999)
+- Sem validação de tamanho mínimo/máximo
+- Mensagens de erro nativas do browser (não customizáveis)
+
+---
+
+**Validação Recomendada (React Hook Form + Zod):**
+
+**Instalação:**
+```bash
+yarn add react-hook-form @hookform/resolvers zod
+```
+
+**Schema Zod:**
+```typescript
+import { z } from 'zod';
+
+const vehicleSchema = z.object({
+  placa: z.string()
+    .regex(/^[A-Z]{3}-\d{4}$/, 'Formato inválido. Use AAA-1234'),
+  marca: z.string().min(2, 'Mínimo 2 caracteres'),
+  modelo: z.string().min(2, 'Mínimo 2 caracteres'),
+  ano_fabricacao: z.number()
+    .int()
+    .min(1900, 'Ano inválido')
+    .max(new Date().getFullYear() + 1, 'Ano futuro inválido'),
+  chassi: z.string()
+    .length(17, 'Chassi deve ter 17 caracteres'),
+  status: z.enum(['EM_ATIVIDADE', 'EM_MANUTENCAO', 'INATIVO']),
+  lotacao_atual: z.string().min(3, 'Mínimo 3 caracteres'),
+  departamento: z.string().min(3, 'Mínimo 3 caracteres')
+});
+```
+
+**Uso:**
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const { register, handleSubmit, formState: { errors } } = useForm({
+  resolver: zodResolver(vehicleSchema)
+});
+
+const onSubmit = async (data) => {
+  // data já validado
+  await axios.post('/api/vehicles', data);
+};
+
+// No JSX
+<form onSubmit={handleSubmit(onSubmit)}>
+  <Input {...register('placa')} />
+  {errors.placa && <span className="text-red-500">{errors.placa.message}</span>}
+</form>
+```
+
+---
+
+### 15.2 Validações de API (Backend)
+
+**Estratégia:** Pydantic automático
+
+**Validações Aplicadas:**
+
+**EmailStr:**
+```python
+email: EmailStr
+# Valida formato de email automaticamente
+# Requer biblioteca email-validator
+```
+
+**Tipos:**
+```python
+ano_fabricacao: int  # Valida que é inteiro
+placa: str           # Valida que é string
+```
+
+**Campos Obrigatórios:**
+```python
+class VehicleCreate(BaseModel):
+    placa: str  # Obrigatório (sem Optional)
+    marca: str  # Obrigatório
+```
+
+**Valores Default:**
+```python
+role: str = "PADRÃO"  # Se não fornecido, usa default
+status: str = "EM_ATIVIDADE"
+```
+
+**Limitações:**
+- Sem validação de range (ano, tamanho de string)
+- Sem validação de formato (placa, chassi)
+- Sem validação de enum (status, role aceita qualquer string)
+
+---
+
+**Validação Aprimorada (Pydantic v2):**
+
+```python
+from pydantic import BaseModel, Field, EmailStr, field_validator
+from typing import Literal
+from datetime import datetime
+
+class VehicleCreate(BaseModel):
+    placa: str = Field(
+        ...,
+        pattern=r'^[A-Z]{3}-\d{4}$',
+        description="Formato: AAA-1234"
+    )
+    marca: str = Field(..., min_length=2, max_length=50)
+    modelo: str = Field(..., min_length=2, max_length=50)
+    ano_fabricacao: int = Field(..., ge=1900, le=datetime.now().year + 1)
+    chassi: str = Field(..., min_length=17, max_length=17)
+    status: Literal['EM_ATIVIDADE', 'EM_MANUTENCAO', 'INATIVO'] = 'EM_ATIVIDADE'
+    lotacao_atual: str = Field(..., min_length=3, max_length=200)
+    departamento: str = Field(..., min_length=3, max_length=200)
+    
+    @field_validator('placa')
+    @classmethod
+    def placa_uppercase(cls, v: str) -> str:
+        return v.upper()
+    
+    @field_validator('chassi')
+    @classmethod
+    def chassi_alphanumeric(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError('Chassi deve ser alfanumérico')
+        return v.upper()
+```
+
+---
+
+### 15.3 Mensagens de Erro
+
+**Frontend - Formato:**
+```javascript
+const formatApiErrorDetail = (detail) => {
+  if (detail == null) return 'Algo deu errado. Tente novamente.';
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail))
+    return detail
+      .map((e) => (e && typeof e.msg === 'string' ? e.msg : JSON.stringify(e)))
+      .filter(Boolean)
+      .join(' ');
+  if (detail && typeof detail.msg === 'string') return detail.msg;
+  return String(detail);
+};
+```
+
+**Casos Tratados:**
+1. `detail` é string: retorna direto
+2. `detail` é array (Pydantic validation errors): junta mensagens
+3. `detail` é objeto com `.msg`: retorna `.msg`
+4. `detail` é null/undefined: mensagem genérica
+5. Outro: converte para string
+
+**Exibição:**
+```javascript
+// Toast (notificações)
+toast.error('Veículo não encontrado');
+toast.success('Veículo cadastrado com sucesso!');
+
+// Inline (formulário de login)
+{error && (
+  <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
+    {error}
+  </div>
+)}
+```
+
+---
+
+**Backend - Mensagens:**
+
+**Erros de Negócio (HTTPException):**
+```python
+raise HTTPException(status_code=404, detail="Veículo não encontrado")
+raise HTTPException(status_code=400, detail="Email já cadastrado")
+raise HTTPException(status_code=401, detail="Email ou senha incorretos")
+raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+```
+
+**Erros de Validação (Pydantic):**
+```json
+{
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "email"],
+      "msg": "Field required",
+      "input": {...}
+    }
+  ]
+}
+```
+
+**Mensagens em Português:**
+- Todas mensagens de HTTPException em português
+- Mensagens Pydantic em inglês (padrão da biblioteca)
+- **Melhoria:** Customizar mensagens Pydantic para português
+
+---
+
+### 15.4 Estratégias de Recuperação de Erro
+
+**Erros de Rede (Frontend):**
+```javascript
+try {
+  await axios.post(...);
+} catch (error) {
+  if (error.code === 'ECONNABORTED') {
+    // Timeout
+    toast.error('Tempo esgotado. Tente novamente.');
+  } else if (!error.response) {
+    // Sem conexão
+    toast.error('Sem conexão com servidor. Verifique sua internet.');
+  } else {
+    // Erro HTTP
+    toast.error(formatApiErrorDetail(error.response?.data?.detail));
+  }
+}
+```
+
+**Token Expirado:**
+```javascript
+// Situação atual: Usuário precisa fazer login novamente
+// Melhoria: Implementar refresh token automático
+
+axios.interceptors.response.use(
+  response => response,
+  async error => {
+    if (error.response?.status === 401 && error.config && !error.config.__isRetryRequest) {
+      error.config.__isRetryRequest = true;
+      try {
+        await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        return axios(error.config);
+      } catch {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+**Erros de Validação:**
+```javascript
+// Situação atual: Toast genérico
+// Melhoria: Mostrar erros campo a campo
+
+if (error.response?.status === 422) {
+  const validationErrors = error.response.data.detail;
+  validationErrors.forEach(err => {
+    const field = err.loc[err.loc.length - 1];
+    toast.error(`${field}: ${err.msg}`);
+  });
+}
+```
+
+---
+
+**Retry Automático (Recomendado):**
+```javascript
+import axios from 'axios';
+import axiosRetry from 'axios-retry';
+
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (error) => {
+    // Retry em erros de rede ou 5xx
+    return axiosRetry.isNetworkError(error) || 
+           (error.response?.status >= 500 && error.response?.status < 600);
+  }
+});
+```
+
+---
+
+### 15.5 Logging de Erros
+
+**Frontend (Recomendado):**
+```javascript
+// Sentry ou similar
+import * as Sentry from '@sentry/react';
+
+Sentry.init({
+  dsn: process.env.REACT_APP_SENTRY_DSN,
+  integrations: [new BrowserTracing()],
+  tracesSampleRate: 1.0,
+});
+
+// Captura automática de erros não tratados
+// Ou manual:
+try {
+  riskyOperation();
+} catch (error) {
+  Sentry.captureException(error);
+  toast.error('Erro inesperado. Nossa equipe foi notificada.');
+}
+```
+
+**Backend:**
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    risky_operation()
+except Exception as e:
+    logger.error(f"Erro ao processar: {str(e)}", exc_info=True)
+    raise HTTPException(status_code=500, detail="Erro interno")
+```
+
+---
+
+## 16. RESPONSIVIDADE, UX E COMPORTAMENTO VISUAL
+
+### 16.1 Breakpoints
+
+**Tailwind Padrão:**
+```javascript
+{
+  'sm': '640px',   // @media (min-width: 640px)
+  'md': '768px',   // @media (min-width: 768px)
+  'lg': '1024px',  // @media (min-width: 1024px)
+  'xl': '1280px',  // @media (min-width: 1280px)
+  '2xl': '1536px'  // @media (min-width: 1536px)
+}
+```
+
+**Estratégia:** Mobile-first
+
+**Aplicação:**
+```
+Mobile (<640px):     Base styles (sem prefixo)
+Tablet (640-1023px): sm: e md: prefixes
+Desktop (1024px+):   lg:, xl:, 2xl: prefixes
+```
+
+---
+
+### 16.2 Comportamento por Dispositivo
+
+**16.2.1 Sidebar (DashboardLayout)**
+
+**Mobile (<lg):**
+```javascript
+className="fixed lg:static inset-y-0 left-0 z-50 w-64
+           transform -translate-x-full lg:translate-x-0
+           transition-transform duration-200"
+```
+- Posição fixa, fora da tela (translate-x-full)
+- Overlay escuro ao abrir
+- Menu hamburger no header
+- Fecha ao clicar em link ou overlay
+
+**Desktop (>=lg):**
+- Posição static (fluxo normal)
+- Sempre visível
+- Sem overlay
+- Sem botão hamburger
+
+---
+
+**16.2.2 Tabelas**
+
+**Mobile:**
+```javascript
+<div className="overflow-x-auto">
+  <Table>...</Table>
+</div>
+```
+- Scroll horizontal
+- Larguras de coluna fixas ou min-width
+- Todas colunas visíveis (não esconde)
+
+**Melhoria Recomendada - Cards em Mobile:**
+```javascript
+// Versão responsiva melhor
+const isMobile = useMediaQuery('(max-width: 768px)');
+
+{isMobile ? (
+  // Cards
+  <div className="space-y-4">
+    {vehicles.map(v => (
+      <div key={v.id} className="bg-card p-4 rounded border">
+        <h3 className="font-bold">{v.placa}</h3>
+        <p>{v.marca} {v.modelo}</p>
+        <Badge>{v.status}</Badge>
+      </div>
+    ))}
+  </div>
+) : (
+  // Tabela
+  <Table>...</Table>
+)}
+```
+
+---
+
+**16.2.3 Formulários**
+
+**Mobile:**
+```javascript
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+  <Input /> {/* Full width em mobile */}
+  <Input /> {/* Full width em mobile */}
+</div>
+```
+- 1 coluna
+- Inputs full-width
+- Botões full-width
+
+**Tablet/Desktop:**
+- 2 colunas
+- Inputs com largura fixa
+- Botões inline
+
+---
+
+**16.2.4 Modal/Dialog**
+
+**Mobile:**
+```javascript
+<DialogContent className="max-w-[95vw] md:max-w-3xl">
+  {/* Conteúdo */}
+</DialogContent>
+```
+- 95% da largura da tela
+- Padding reduzido
+- Scroll vertical se necessário
+
+**Desktop:**
+- Largura fixa (max-w-3xl = 768px)
+- Centralizado
+- Padding normal
+
+---
+
+### 16.3 Estados Visuais
+
+**16.3.1 Loading States**
+
+**Spinner Global (ProtectedRoute):**
+```javascript
+<div className="flex items-center justify-center min-h-screen">
+  <div className="text-center">
+    <div className="inline-block h-12 w-12 animate-spin rounded-full 
+                    border-4 border-solid border-primary border-r-transparent"></div>
+    <p className="mt-4 text-muted-foreground">Carregando...</p>
+  </div>
+</div>
+```
+
+**Spinner em Lista (VehicleList):**
+```javascript
+{loading ? (
+  <div className="flex justify-center min-h-[400px] items-center">
+    <Spinner />
+  </div>
+) : (
+  <Table>...</Table>
+)}
+```
+
+**Botão Loading:**
+```javascript
+<Button disabled={loading}>
+  {loading ? 'Entrando...' : 'Entrar'}
+</Button>
+```
+
+---
+
+**16.3.2 Empty States**
+
+**Lista Vazia:**
+```javascript
+{vehicles.length === 0 ? (
+  <TableRow>
+    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+      Nenhum veículo encontrado
+    </TableCell>
+  </TableRow>
+) : (
+  vehicles.map(...)
+)}
+```
+
+**Melhoria Recomendada:**
+```javascript
+{vehicles.length === 0 && (
+  <div className="text-center py-12">
+    <Car className="mx-auto h-12 w-12 text-muted-foreground" />
+    <h3 className="mt-4 text-lg font-medium">Nenhum veículo encontrado</h3>
+    <p className="mt-2 text-sm text-muted-foreground">
+      {searchPlaca || searchMarca 
+        ? 'Tente ajustar os filtros de busca'
+        : 'Cadastre o primeiro veículo para começar'}
+    </p>
+    {isAdmin && !searchPlaca && !searchMarca && (
+      <Button onClick={() => navigate('/dashboard/cadastrar-veiculo')} className="mt-4">
+        Cadastrar Veículo
+      </Button>
+    )}
+  </div>
+)}
+```
+
+---
+
+**16.3.3 Toasts (Notificações)**
+
+**Biblioteca:** Sonner
+
+**Posicionamento:** top-right
+
+**Tipos:**
+```javascript
+import { toast } from 'sonner';
+
+toast.success('Veículo cadastrado com sucesso!');
+toast.error('Erro ao carregar veículos');
+toast.info('Informação importante');
+toast.warning('Atenção: dados não salvos');
+```
+
+**Características:**
+- Auto-dismiss após 4s (padrão Sonner)
+- Empilhamento vertical
+- Animação de entrada/saída
+- Cores automáticas por tipo (richColors prop)
+
+---
+
+**16.3.4 Confirmações**
+
+**Deletar (window.confirm nativo):**
+```javascript
+if (!window.confirm('Tem certeza que deseja deletar este veículo?')) return;
+```
+
+**Melhoria Recomendada (Alert Dialog):**
+```javascript
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, 
+         AlertDialogContent, AlertDialogDescription, 
+         AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } 
+from './ui/alert-dialog';
+
+const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+const [vehicleToDelete, setVehicleToDelete] = useState(null);
+
+<AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+  <AlertDialogContent>
+    <AlertDialogHeader>
+      <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
+      <AlertDialogDescription>
+        Tem certeza que deseja deletar o veículo {vehicleToDelete?.placa}? 
+        Esta ação não pode ser desfeita.
+      </AlertDialogDescription>
+    </AlertDialogHeader>
+    <AlertDialogFooter>
+      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+      <AlertDialogAction onClick={() => confirmDelete()}>
+        Deletar
+      </AlertDialogAction>
+    </AlertDialogFooter>
+  </AlertDialogContent>
+</AlertDialog>
+```
+
+---
+
+### 16.4 Micro-interações
+
+**Hover States:**
+```javascript
+// Cards do dashboard
+className="hover:shadow-md hover:-translate-y-1 transition-all duration-200"
+
+// Botões
+className="hover:bg-primary/90 transition-colors"
+
+// Nav items
+className="hover:bg-primary-foreground/10 transition-all"
+```
+
+**Active States:**
+```javascript
+// NavLink ativo
+className={({ isActive }) =>
+  isActive 
+    ? 'bg-primary-foreground text-primary font-medium'
+    : 'text-primary-foreground/90'
+}
+```
+
+**Focus States:**
+```javascript
+// Inputs (via Shadcn/UI)
+className="focus:ring-2 focus:ring-primary focus:ring-offset-2"
+```
+
+**Disabled States:**
+```javascript
+<Button disabled={loading}>
+  {/* Automaticamente: opacity reduzida, cursor not-allowed */}
+</Button>
+```
+
+---
+
+### 16.5 Acessibilidade
+
+**Boas Práticas Implementadas:**
+
+1. **Semantic HTML:**
+```javascript
+<header>, <nav>, <main>, <aside>, <footer>
+<h1>, <h2>, <h3> (hierarquia correta)
+<button>, <a>, <input>, <label>
+```
+
+2. **Labels para Inputs:**
+```javascript
+<Label htmlFor="email">Email</Label>
+<Input id="email" />
+```
+
+3. **ARIA via Shadcn/UI:**
+```javascript
+// Dialog
+role="dialog"
+aria-labelledby="dialog-title"
+aria-describedby="dialog-description"
+
+// Button
+aria-label="Fechar menu"
+aria-expanded={sidebarOpen}
+```
+
+4. **data-testid:**
+```javascript
+data-testid="login-submit-button"
+data-testid="vehicle-row-ABC-1234"
+```
+
+5. **Focus Trap em Modais:**
+- Shadcn Dialog implementa automaticamente
+- Tab navega apenas dentro do modal
+- Esc fecha modal
+
+---
+
+**Melhorias Necessárias:**
+
+1. **Skip Navigation:**
+```javascript
+<a href="#main-content" className="sr-only focus:not-sr-only">
+  Pular para conteúdo principal
+</a>
+<main id="main-content">...</main>
+```
+
+2. **Live Regions para Toasts:**
+```javascript
+<div role="status" aria-live="polite" aria-atomic="true">
+  {/* Toast messages */}
+</div>
+```
+
+3. **Announce Filter Results:**
+```javascript
+<div role="status" aria-live="polite" className="sr-only">
+  {vehicles.length} veículos encontrados
+</div>
+```
+
+4. **Keyboard Shortcuts:**
+```javascript
+useEffect(() => {
+  const handleKeyPress = (e) => {
+    if (e.ctrlKey && e.key === 'k') {
+      // Abrir busca
+      searchInputRef.current?.focus();
+    }
+  };
+  window.addEventListener('keydown', handleKeyPress);
+  return () => window.removeEventListener('keydown', handleKeyPress);
+}, []);
+```
+
+---
+
+Devido ao limite de caracteres, vou continuar com as seções finais (17-21) na próxima mensagem. Deseja que eu continue com Segurança, Deploy, Migração e Checklist Final?
